@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum TokenType {
+pub enum TokenType {
     // Single-character tokens.
     LeftParen,
     RightParen,
@@ -78,10 +78,10 @@ impl FromStr for TokenType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token<'a> {
-    kind: TokenType,
-    lexeme: &'a str,
-    literal: Option<String>,
-    line: u32,
+    pub kind: TokenType,
+    pub lexeme: &'a str,
+    pub literal: Option<String>,
+    pub line: u32,
 }
 
 pub struct Lexer<'a> {
@@ -174,7 +174,7 @@ impl<'a> Lexer<'a> {
                     self.add_token(TokenType::Slash, None);
                 }
             }
-            " " | "\r" | "\t" => {},
+            " " | "\r" | "\t" => {}
             "\n" => {
                 self.line += 1;
             }
@@ -324,8 +324,7 @@ impl<'a> Lexer<'a> {
                 }
 
                 return true;
-
-            },
+            }
             None => {
                 return false;
             }
