@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::lox::Lox;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenType {
     // Single-character tokens.
@@ -368,11 +370,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn error(&mut self, message: &str) {
-        self.report(self.line, "", message);
-    }
-
-    fn report(&mut self, line: u32, place: &str, message: &str) {
-        panic!("[Line: {}] Error{}: {}", line, place, message);
+        Lox::report(self.line, "", message);
     }
 }
 
