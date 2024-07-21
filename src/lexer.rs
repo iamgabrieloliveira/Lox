@@ -275,7 +275,7 @@ impl<'a> Lexer<'a> {
 
         self.advance();
         // trim the surrounding quotes
-        let value = &self.source[self.start + 1..self.current + 1];
+        let value = &self.source[self.start + 1..self.current - 1];
 
         self.add_token(TokenType::String, Some(value.to_string()));
     }
@@ -320,11 +320,11 @@ impl<'a> Lexer<'a> {
 
         match self.current_token() {
             Some(token) => {
-                if token.as_str().eq(expected) {
-                    self.current += 1;
+                if token != expected {
                     return false;
                 }
 
+                self.current += 1;
                 return true;
             }
             None => {
@@ -352,7 +352,6 @@ impl<'a> Lexer<'a> {
     pub fn scan_tokens(&mut self) -> Vec<Token> {
         while !self.is_at_end() {
             self.start = self.current;
-            println!("Start: {} Current: {}", self.start, self.current);
             self.scan_token();
         }
 
@@ -379,8 +378,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_generate_tokens_correctly() {
-        let mut lexer = Lexer::new("1 + 1");
+    fn equal_equal() {
+        let mut lexer = Lexer::new("1 == 1");
 
         let result = lexer.scan_tokens();
         let mut tokens = result.iter();
@@ -394,16 +393,182 @@ mod tests {
 
         let second = tokens.next().unwrap();
 
-        assert_eq!(second.kind, TokenType::Plus);
+        assert_eq!(second.kind, TokenType::EqualEqual);
         assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, "+");
+        assert_eq!(second.lexeme, "==");
         assert_eq!(second.literal, None);
+    }
 
-        let third = tokens.next().unwrap();
+    #[test]
+    fn bang_equal() {
+        let mut lexer = Lexer::new("1 != 1");
 
-        assert_eq!(third.kind, TokenType::Number);
-        assert_eq!(third.line, 1);
-        assert_eq!(third.lexeme, "1");
-        assert_eq!(third.literal, Some(String::from("1")));
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+
+        let second = tokens.next().unwrap();
+
+        assert_eq!(second.kind, TokenType::BangEqual);
+        assert_eq!(second.line, 1);
+        assert_eq!(second.lexeme, "!=");
+        assert_eq!(second.literal, None);
+    }
+
+    #[test]
+    fn greater() {
+        let mut lexer = Lexer::new("1 > 1");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+
+        let second = tokens.next().unwrap();
+
+        assert_eq!(second.kind, TokenType::Greater);
+        assert_eq!(second.line, 1);
+        assert_eq!(second.lexeme, ">");
+        assert_eq!(second.literal, None);
+    }
+
+    #[test]
+    fn greater_equal() {
+        let mut lexer = Lexer::new("1 >= 1");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+
+        let second = tokens.next().unwrap();
+
+        assert_eq!(second.kind, TokenType::GreaterEqual);
+        assert_eq!(second.line, 1);
+        assert_eq!(second.lexeme, ">=");
+        assert_eq!(second.literal, None);
+    }
+
+    #[test]
+    fn less() {
+        let mut lexer = Lexer::new("1 < 1");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+
+        let second = tokens.next().unwrap();
+
+        assert_eq!(second.kind, TokenType::Less);
+        assert_eq!(second.line, 1);
+        assert_eq!(second.lexeme, "<");
+        assert_eq!(second.literal, None);
+    }
+
+    #[test]
+    fn less_equal() {
+        let mut lexer = Lexer::new("1 <= 1");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+
+        let second = tokens.next().unwrap();
+
+        assert_eq!(second.kind, TokenType::LessEqual);
+        assert_eq!(second.line, 1);
+        assert_eq!(second.lexeme, "<=");
+        assert_eq!(second.literal, None);
+    }
+
+    #[test]
+    fn string() {
+        let mut lexer = Lexer::new("\"hello\"");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::String);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "\"hello\"");
+        assert_eq!(first.literal, Some(String::from("hello")));
+    }
+
+    #[test]
+    fn number() {
+        let mut lexer = Lexer::new("1");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
+    }
+
+    #[test]
+    fn identifier() {
+        let mut lexer = Lexer::new("hello");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Identifier);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "hello");
+        assert_eq!(first.literal, None);
+    }
+
+    #[test]
+    fn should_skip_comments() {
+        let mut lexer = Lexer::new(
+            "// this is a comment
+            1",
+        );
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.line, 2);
+        assert_eq!(first.lexeme, "1");
+        assert_eq!(first.literal, Some(String::from("1")));
     }
 }

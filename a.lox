@@ -1,6 +1,1 @@
-var a = 1 + 1
-
-while (true) {
-  print "Hello"
-}
-
+let a = 10

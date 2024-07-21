@@ -7,7 +7,7 @@
 
 use crate::Token;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'a> {
     Literal(Literal),
     Unary {
@@ -22,7 +22,7 @@ pub enum Expression<'a> {
     Grouping(Box<Expression<'a>>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     Number(f64),
     String(String),
