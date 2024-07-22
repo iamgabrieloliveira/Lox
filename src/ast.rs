@@ -24,7 +24,8 @@ pub enum Expression<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
-    Number(f64),
+    Integer(i64),
+    Float(f64),
     String(String),
     Boolean(bool),
     Nil,

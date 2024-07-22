@@ -16,40 +16,26 @@ pub struct Parser<'a> {
 }
 
 fn is_equality(kind: TokenType) -> bool {
-    match kind {
-        TokenType::BangEqual | TokenType::EqualEqual => true,
-        _ => false,
-    }
+    matches!(kind, TokenType::BangEqual | TokenType::EqualEqual)
 }
 
 fn is_comparison(kind: TokenType) -> bool {
-    match kind {
-        TokenType::Greater | TokenType::GreaterEqual | TokenType::Less | TokenType::LessEqual => {
-            true
-        }
-        _ => false,
-    }
+    matches!(
+        kind,
+        TokenType::Greater | TokenType::GreaterEqual | TokenType::Less | TokenType::LessEqual
+    )
 }
 
 fn is_term(kind: TokenType) -> bool {
-    match kind {
-        TokenType::Minus | TokenType::Plus => true,
-        _ => false,
-    }
+    matches!(kind, TokenType::Minus | TokenType::Plus)
 }
 
 fn is_factor(kind: TokenType) -> bool {
-    match kind {
-        TokenType::Star | TokenType::Slash => true,
-        _ => false,
-    }
+    matches!(kind, TokenType::Slash | TokenType::Star)
 }
 
 fn is_unary(kind: TokenType) -> bool {
-    match kind {
-        TokenType::Bang | TokenType::Minus => true,
-        _ => false,
-    }
+    matches!(kind, TokenType::Bang | TokenType::Minus)
 }
 
 impl<'a> Parser<'a> {
@@ -66,123 +52,83 @@ impl<'a> Parser<'a> {
     }
 
     fn equality(&mut self) -> ParserResult<Expression<'a>> {
-        let expr = self.comparison();
+        let mut expr = self.comparison()?;
 
-        match expr {
-            Ok(mut expr) => {
-                while is_equality(self.peek().kind) {
-                    self.advance();
+        while is_equality(self.peek().kind) {
+            self.advance();
 
-                    let operator = self.previous().clone();
+            let operator = self.previous().clone();
 
-                    let right = self.comparison();
+            let right = self.comparison()?;
 
-                    match right {
-                        Ok(right) => {
-                            expr = Expression::Binary {
-                                left: Box::new(expr),
-                                operator,
-                                right: Box::new(right),
-                            };
-                        }
-                        Err(err) => return Err(err),
-                    };
-                }
-
-                Ok(expr)
-            }
-            Err(err) => Err(err),
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
         }
+
+        Ok(expr)
     }
 
     fn comparison(&mut self) -> ParserResult<Expression<'a>> {
-        let expr = self.term();
+        let mut expr = self.term()?;
 
-        match expr {
-            Ok(mut expr) => {
-                while is_comparison(self.peek().kind) {
-                    self.advance();
+        while is_comparison(self.peek().kind) {
+            self.advance();
 
-                    let operator = self.previous().clone();
+            let operator = self.previous().clone();
 
-                    let right = self.term();
+            let right = self.term()?;
 
-                    match right {
-                        Ok(right) => {
-                            expr = Expression::Binary {
-                                left: Box::new(expr),
-                                operator,
-                                right: Box::new(right),
-                            };
-                        }
-                        Err(err) => return Err(err),
-                    };
-                }
-
-                Ok(expr)
-            }
-            Err(err) => Err(err),
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
         }
+
+        Ok(expr)
     }
 
     fn term(&mut self) -> ParserResult<Expression<'a>> {
-        let expr = self.factor();
+        let mut expr = self.factor()?;
 
-        match expr {
-            Ok(mut expr) => {
-                while is_term(self.peek().kind) {
-                    self.advance();
+        while is_term(self.peek().kind) {
+            self.advance();
 
-                    let operator = self.previous().clone();
+            let operator = self.previous().clone();
 
-                    let right = self.factor();
+            let right = self.factor()?;
 
-                    match right {
-                        Ok(right) => {
-                            expr = Expression::Binary {
-                                left: Box::new(expr),
-                                operator,
-                                right: Box::new(right),
-                            };
-                        }
-                        Err(err) => return Err(err),
-                    };
-                }
-
-                Ok(expr)
-            }
-            Err(err) => Err(err),
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
         }
+
+        Ok(expr)
     }
 
     fn factor(&mut self) -> ParserResult<Expression<'a>> {
-        let expr = self.unary();
+        let mut expr = self.unary()?;
 
-        match expr {
-            Ok(mut expr) => {
-                while is_factor(self.peek().kind) {
-                    self.advance();
+        while is_factor(self.peek().kind) {
+            self.advance();
 
-                    let operator = self.previous().clone();
+            let operator = self.previous().clone();
 
-                    let right = self.unary();
+            let right = self.unary()?;
 
-                    match right {
-                        Ok(right) => {
-                            expr = Expression::Binary {
-                                left: Box::new(expr),
-                                operator,
-                                right: Box::new(right),
-                            };
-                        }
-                        Err(err) => return Err(err),
-                    };
-                }
-
-                Ok(expr)
-            }
-            Err(err) => Err(err),
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
         }
+
+        Ok(expr)
     }
 
     fn unary(&mut self) -> ParserResult<Expression<'a>> {
@@ -215,41 +161,63 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Expression::Literal(Literal::Nil))
             }
-            TokenType::Number => {
+            TokenType::Integer => {
+                self.advance();
+
+                let token = self.previous();
+
+                let value = token.literal.clone();
+
+                match value {
+                    crate::lexer::Literal::Integer(value) => {
+                        Ok(Expression::Literal(Literal::Integer(value)))
+                    }
+                    _ => {
+                        // todo: A good way to handle/prevent it?
+                        panic!("Token with type Integer cannot contains a non-integer literal type")
+                    }
+                }
+            }
+            TokenType::Float => {
                 self.advance();
 
                 let token = self.previous();
                 let value = token.literal.clone();
-                let value = value.unwrap().parse::<f64>().expect("Invalid number");
-                let literal = Literal::Number(value);
 
-                Ok(Expression::Literal(literal))
+                match value {
+                    crate::lexer::Literal::Float(value) => {
+                        Ok(Expression::Literal(Literal::Float(value)))
+                    }
+                    _ => {
+                        // todo: A good way to handle/prevent it?
+                        panic!("Token with type Float cannot contains a non-float literal type")
+                    }
+                }
             }
             TokenType::String => {
                 self.advance();
 
                 let token = self.previous();
                 let value = token.literal.clone();
-                let value = value.unwrap();
-                let literal = Literal::String(value);
 
-                Ok(Expression::Literal(literal))
+                match value {
+                    crate::lexer::Literal::String(value) => {
+                        Ok(Expression::Literal(Literal::String(value)))
+                    }
+                    _ => {
+                        // todo: A good way to handle/prevent it?
+                        panic!("Token with type String cannot contains a non-string literal type")
+                    }
+                }
             }
             TokenType::LeftParen => {
                 self.advance();
 
-                let expr = self.expression();
+                let expr = self.expression()?;
 
-                let right_paren =
-                    self.consume::<()>(TokenType::RightParen, "Expect ')' after expression");
+                self.consume(TokenType::RightParen, "Expect ')' after expression")?;
 
-                match right_paren {
-                    Err(err) => Err(err),
-                    Ok(_) => match expr {
-                        Ok(expr) => Ok(Expression::Grouping(Box::new(expr))),
-                        Err(err) => Err(err),
-                    },
-                }
+                Ok(Expression::Grouping(Box::new(expr)))
             }
             _ => {
                 let token = self.peek().clone();
@@ -258,7 +226,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume<T>(&mut self, kind: TokenType, message: &str) -> ParserResult<&Token<'a>> {
+    fn consume(&mut self, kind: TokenType, message: &str) -> ParserResult<&Token<'a>> {
         let token = self.peek().clone();
 
         if token.kind == kind {
@@ -348,7 +316,7 @@ mod tests {
 
         let expression = parser.parse().unwrap();
 
-        assert_eq!(expression, Expression::Literal(Literal::Number(1.0)));
+        assert_eq!(expression, Expression::Literal(Literal::Integer(1)));
     }
 
     #[test]
@@ -369,10 +337,10 @@ mod tests {
                 operator: Token {
                     kind: TokenType::Minus,
                     lexeme: "-",
-                    literal: None,
+                    literal: crate::lexer::Literal::None,
                     line: 1
                 },
-                right: Box::new(Expression::Literal(Literal::Number(1.0)))
+                right: Box::new(Expression::Literal(Literal::Integer(1)))
             }
         );
     }
@@ -390,14 +358,14 @@ mod tests {
         assert_eq!(
             expression,
             Expression::Binary {
-                left: Box::new(Expression::Literal(Literal::Number(1.0))),
+                left: Box::new(Expression::Literal(Literal::Integer(1))),
                 operator: Token {
                     kind: TokenType::Plus,
                     lexeme: "+",
-                    literal: None,
+                    literal: crate::lexer::Literal::None,
                     line: 1
                 },
-                right: Box::new(Expression::Literal(Literal::Number(2.0)))
+                right: Box::new(Expression::Literal(Literal::Integer(2)))
             }
         );
     }
@@ -415,14 +383,14 @@ mod tests {
         assert_eq!(
             expression,
             Expression::Grouping(Box::new(Expression::Binary {
-                left: Box::new(Expression::Literal(Literal::Number(1.0))),
+                left: Box::new(Expression::Literal(Literal::Integer(1))),
                 operator: Token {
                     kind: TokenType::Plus,
                     lexeme: "+",
-                    literal: None,
+                    literal: crate::lexer::Literal::None,
                     line: 1
                 },
-                right: Box::new(Expression::Literal(Literal::Number(2.0)))
+                right: Box::new(Expression::Literal(Literal::Integer(2)))
             }))
         );
     }

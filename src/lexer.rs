@@ -30,7 +30,8 @@ pub enum TokenType {
     // Literals.
     Identifier,
     String,
-    Number,
+    Integer,
+    Float,
 
     // Keywords.
     And,
@@ -79,10 +80,18 @@ impl FromStr for TokenType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    String(String),
+    Integer(i64),
+    Float(f64),
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token<'a> {
     pub kind: TokenType,
     pub lexeme: &'a str,
-    pub literal: Option<String>,
+    pub literal: Literal,
     pub line: u32,
 }
 
@@ -99,8 +108,8 @@ impl<'a> Lexer<'a> {
         Self {
             source,
             tokens: Vec::new(),
-            start: usize::default(),
-            current: usize::default(),
+            start: 0,
+            current: 0,
             line: 1,
         }
     }
@@ -121,16 +130,16 @@ impl<'a> Lexer<'a> {
         let c = c.unwrap();
 
         match c.as_str() {
-            "(" => self.add_token(TokenType::LeftParen, None),
-            ")" => self.add_token(TokenType::RightParen, None),
-            "{" => self.add_token(TokenType::LeftBrace, None),
-            "}" => self.add_token(TokenType::RightBrace, None),
-            "," => self.add_token(TokenType::Comma, None),
-            "." => self.add_token(TokenType::Dot, None),
-            "-" => self.add_token(TokenType::Minus, None),
-            "+" => self.add_token(TokenType::Plus, None),
-            ";" => self.add_token(TokenType::Semicolon, None),
-            "*" => self.add_token(TokenType::Star, None),
+            "(" => self.add_token(TokenType::LeftParen, Literal::None),
+            ")" => self.add_token(TokenType::RightParen, Literal::None),
+            "{" => self.add_token(TokenType::LeftBrace, Literal::None),
+            "}" => self.add_token(TokenType::RightBrace, Literal::None),
+            "," => self.add_token(TokenType::Comma, Literal::None),
+            "." => self.add_token(TokenType::Dot, Literal::None),
+            "-" => self.add_token(TokenType::Minus, Literal::None),
+            "+" => self.add_token(TokenType::Plus, Literal::None),
+            ";" => self.add_token(TokenType::Semicolon, Literal::None),
+            "*" => self.add_token(TokenType::Star, Literal::None),
             "!" => {
                 let token = if self.matches("=") {
                     TokenType::BangEqual
@@ -138,7 +147,7 @@ impl<'a> Lexer<'a> {
                     TokenType::Bang
                 };
 
-                self.add_token(token, None);
+                self.add_token(token, Literal::None);
             }
             "=" => {
                 let token = if self.matches("=") {
@@ -147,7 +156,7 @@ impl<'a> Lexer<'a> {
                     TokenType::Equal
                 };
 
-                self.add_token(token, None);
+                self.add_token(token, Literal::None);
             }
             "<" => {
                 let token = if self.matches("=") {
@@ -156,7 +165,7 @@ impl<'a> Lexer<'a> {
                     TokenType::Less
                 };
 
-                self.add_token(token, None);
+                self.add_token(token, Literal::None);
             }
             ">" => {
                 let token = if self.matches("=") {
@@ -165,7 +174,7 @@ impl<'a> Lexer<'a> {
                     TokenType::Greater
                 };
 
-                self.add_token(token, None);
+                self.add_token(token, Literal::None);
             }
             "/" => {
                 if self.matches("/") {
@@ -173,7 +182,7 @@ impl<'a> Lexer<'a> {
                         self.advance();
                     }
                 } else {
-                    self.add_token(TokenType::Slash, None);
+                    self.add_token(TokenType::Slash, Literal::None);
                 }
             }
             " " | "\r" | "\t" => {}
@@ -207,8 +216,8 @@ impl<'a> Lexer<'a> {
         let text = self.current_slice();
 
         match TokenType::from_str(text) {
-            Ok(kind) => self.add_token(kind, None),
-            Err(_) => self.add_token(TokenType::Identifier, None),
+            Ok(kind) => self.add_token(kind, Literal::None),
+            Err(_) => self.add_token(TokenType::Identifier, Literal::String(text.to_string())),
         };
     }
 
@@ -230,7 +239,9 @@ impl<'a> Lexer<'a> {
 
         let next = self.peek_next().unwrap();
 
-        if self.peek() == "." && self.is_digit(next) {
+        let is_float = self.peek() == "." && self.is_digit(next);
+
+        if is_float {
             self.advance();
 
             loop {
@@ -246,9 +257,13 @@ impl<'a> Lexer<'a> {
 
         let value = self.current_slice();
 
-        let value = value.parse::<i32>().unwrap();
-        // todo: find a way to add the value without converting to string
-        self.add_token(TokenType::Number, Some(value.to_string()));
+        if is_float {
+            let value = value.parse::<f64>().unwrap();
+            self.add_token(TokenType::Float, Literal::Float(value));
+        } else {
+            let value = value.parse::<i64>().unwrap();
+            self.add_token(TokenType::Integer, Literal::Integer(value));
+        }
     }
 
     fn peek_next(&mut self) -> Option<String> {
@@ -274,10 +289,10 @@ impl<'a> Lexer<'a> {
         }
 
         self.advance();
-        // trim the surrounding quotes
+
         let value = &self.source[self.start + 1..self.current - 1];
 
-        self.add_token(TokenType::String, Some(value.to_string()));
+        self.add_token(TokenType::String, Literal::String(value.to_string()));
     }
 
     fn peek_char(&mut self) -> char {
@@ -302,11 +317,7 @@ impl<'a> Lexer<'a> {
 
     fn char_at(&self, index: usize) -> Option<String> {
         let char = self.source.chars().nth(index);
-
-        match char {
-            Some(c) => Some(c.to_string()),
-            None => None,
-        }
+        char.map(|c| c.to_string())
     }
 
     fn current_token(&mut self) -> Option<String> {
@@ -319,6 +330,7 @@ impl<'a> Lexer<'a> {
         }
 
         match self.current_token() {
+            None => false,
             Some(token) => {
                 if token != expected {
                     return false;
@@ -327,22 +339,16 @@ impl<'a> Lexer<'a> {
                 self.current += 1;
                 return true;
             }
-            None => {
-                return false;
-            }
         }
     }
 
-    fn add_token(&mut self, kind: TokenType, literal: Option<String>) {
+    fn add_token(&mut self, kind: TokenType, literal: Literal) {
         let text = &self.source[self.start..self.current];
 
         let token = Token {
             kind,
             lexeme: text,
-            literal: match literal {
-                Some(value) => Some(value.to_string()),
-                None => None,
-            },
+            literal,
             line: self.line,
         };
 
@@ -355,17 +361,13 @@ impl<'a> Lexer<'a> {
             self.scan_token();
         }
 
-        self.add_token(TokenType::Eof, None);
+        self.add_token(TokenType::Eof, Literal::None);
 
         return self.tokens.clone();
     }
 
     fn is_at_end(&self) -> bool {
         &self.current >= &self.source.len()
-    }
-
-    pub fn print_tokens(&mut self) {
-        dbg!(&self.tokens);
     }
 
     fn error(&mut self, message: &str) {
@@ -386,17 +388,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::EqualEqual);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, "==");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -408,17 +410,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::BangEqual);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, "!=");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -430,17 +432,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::Greater);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, ">");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -452,17 +454,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::GreaterEqual);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, ">=");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -474,17 +476,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::Less);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, "<");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -496,17 +498,17 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
 
         let second = tokens.next().unwrap();
 
         assert_eq!(second.kind, TokenType::LessEqual);
         assert_eq!(second.line, 1);
         assert_eq!(second.lexeme, "<=");
-        assert_eq!(second.literal, None);
+        assert_eq!(second.literal, Literal::None);
     }
 
     #[test]
@@ -521,11 +523,11 @@ mod tests {
         assert_eq!(first.kind, TokenType::String);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "\"hello\"");
-        assert_eq!(first.literal, Some(String::from("hello")));
+        assert_eq!(first.literal, Literal::String(String::from("hello")));
     }
 
     #[test]
-    fn number() {
+    fn integers() {
         let mut lexer = Lexer::new("1");
 
         let result = lexer.scan_tokens();
@@ -533,10 +535,25 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
+    }
+
+    #[test]
+    fn floats() {
+        let mut lexer = Lexer::new("1.0");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Float);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "1.0");
+        assert_eq!(first.literal, Literal::Float(1.0));
     }
 
     #[test]
@@ -551,7 +568,7 @@ mod tests {
         assert_eq!(first.kind, TokenType::Identifier);
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "hello");
-        assert_eq!(first.literal, None);
+        assert_eq!(first.literal, Literal::String(String::from("hello")));
     }
 
     #[test]
@@ -566,9 +583,9 @@ mod tests {
 
         let first = tokens.next().unwrap();
 
-        assert_eq!(first.kind, TokenType::Number);
+        assert_eq!(first.kind, TokenType::Integer);
         assert_eq!(first.line, 2);
         assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Some(String::from("1")));
+        assert_eq!(first.literal, Literal::Integer(1));
     }
 }
