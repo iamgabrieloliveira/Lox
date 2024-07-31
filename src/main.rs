@@ -1,12 +1,13 @@
 mod ast;
+mod environment;
 mod interpreter;
 mod lexer;
 mod lox;
 mod parser;
 
 use clap::Parser as ArgsParser;
+use interpreter::Interpreter;
 use lexer::Token;
-use lox::Lox;
 use std::path::PathBuf;
 
 #[derive(ArgsParser, Debug)]
@@ -27,8 +28,13 @@ fn main() {
 
     let expression = parser.parse().unwrap();
 
-    match interpreter::evaluate(expression) {
-        Ok(value) => println!("{:?}", value),
-        Err(err) => Lox::error(err.token, err.message.to_string()),
+    let mut interpreter = Interpreter::new(expression);
+
+    let result = interpreter.interpret();
+
+    if result.is_err() {
+        let error = result.unwrap_err();
+        println!("{:?}", error);
+        std::process::exit(65);
     }
 }

@@ -1,13 +1,4 @@
-// Lox Language
+var a = 10;
+var b = 15;
 
-// 10 / 5
-
-// "hello " + "world"
-
-// "hello" == "hello"
-
-// "hello" != "hello"
-
-!false
-
-
+print a + b;

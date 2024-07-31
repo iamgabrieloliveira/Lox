@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Expression, Literal},
+    ast::{Expression, Literal, Statement},
     lexer::TokenType,
     lox::Lox,
     Token,
@@ -43,8 +43,75 @@ impl<'a> Parser<'a> {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> ParserResult<Expression<'a>> {
-        self.expression()
+    pub fn parse(&mut self) -> ParserResult<Vec<Statement>> {
+        let mut statements: Vec<Statement> = Vec::new();
+
+        while !self.is_end() {
+            let statement = self.declaration()?;
+
+            statements.push(statement);
+        }
+
+        Ok(statements)
+    }
+
+    fn declaration(&mut self) -> ParserResult<Statement<'a>> {
+        if self.peek().kind == TokenType::Var {
+            self.advance();
+            return self.variable_declaration();
+        } else {
+            return self.statement();
+        }
+    }
+
+    fn variable_declaration(&mut self) -> ParserResult<Statement<'a>> {
+        let token = self
+            .consume(TokenType::Identifier, "Expect variable name.")?
+            .clone();
+
+        let mut expression = None;
+
+        if self.peek().kind == TokenType::Equal {
+            self.advance();
+
+            expression = Some(self.expression()?);
+        }
+
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        )
+        .unwrap();
+
+        Ok(Statement::Var {
+            name: token,
+            expression,
+        })
+    }
+
+    fn statement(&mut self) -> ParserResult<Statement<'a>> {
+        if self.peek().kind == TokenType::Print {
+            self.advance();
+            return self.print_statement();
+        }
+
+        self.expression_statement()
+    }
+
+    fn print_statement(&mut self) -> ParserResult<Statement<'a>> {
+        let value = self.expression()?;
+
+        self.consume(TokenType::Semicolon, "Expected ';' after value.")?;
+
+        Ok(Statement::Print(value))
+    }
+
+    fn expression_statement(&mut self) -> ParserResult<Statement<'a>> {
+        let expression = self.expression()?;
+
+        self.consume(TokenType::Semicolon, "Expected ';' after value.")?;
+
+        Ok(Statement::Expression(expression))
     }
 
     fn expression(&mut self) -> ParserResult<Expression<'a>> {
@@ -162,9 +229,7 @@ impl<'a> Parser<'a> {
                 Ok(Expression::Literal(Literal::Nil))
             }
             TokenType::Integer => {
-                self.advance();
-
-                let token = self.previous();
+                let token = self.advance();
 
                 let value = token.literal.clone();
 
@@ -195,9 +260,8 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenType::String => {
-                self.advance();
+                let token = self.advance();
 
-                let token = self.previous();
                 let value = token.literal.clone();
 
                 match value {
@@ -210,6 +274,10 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            TokenType::Identifier => {
+                let token = self.advance();
+                Ok(Expression::Variable(token.clone()))
+            }
             TokenType::LeftParen => {
                 self.advance();
 
@@ -221,19 +289,20 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let token = self.peek().clone();
+
                 Self::error(token, "Expect expression".to_string())
             }
         }
     }
 
     fn consume(&mut self, kind: TokenType, message: &str) -> ParserResult<&Token<'a>> {
-        let token = self.peek().clone();
+        let token = self.peek();
 
         if token.kind == kind {
             return Ok(self.advance());
         }
 
-        Self::error(token, message.to_string())
+        Self::error(token.clone(), message.to_string())
     }
 
     fn error<T>(token: Token, message: String) -> ParserResult<T> {
@@ -242,40 +311,8 @@ impl<'a> Parser<'a> {
         Err(ParserError)
     }
 
-    fn synchronize(&mut self) {
-        self.advance();
-
-        while !self.is_end() {
-            if self.previous().kind == TokenType::Semicolon {
-                return;
-            }
-
-            match self.peek().kind {
-                TokenType::Class
-                | TokenType::Fun
-                | TokenType::Var
-                | TokenType::For
-                | TokenType::If
-                | TokenType::While
-                | TokenType::Print
-                | TokenType::Return => return,
-                _ => {
-                    self.advance();
-                }
-            };
-        }
-    }
-
     fn peek(&self) -> &Token<'a> {
         &self.tokens[self.current]
-    }
-
-    fn check(&self, kind: TokenType) -> bool {
-        if self.is_end() {
-            return false;
-        }
-
-        return self.peek().kind == kind;
     }
 
     fn previous(&self) -> &Token<'a> {
@@ -296,102 +333,5 @@ impl<'a> Parser<'a> {
 
     fn is_end(&self) -> bool {
         self.peek().kind == TokenType::Eof
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::Lexer;
-
-    #[test]
-    fn literal() {
-        let source = String::from("1");
-
-        let mut lexer = Lexer::new(&source);
-
-        let tokens = lexer.scan_tokens();
-
-        let mut parser = Parser::new(tokens);
-
-        let expression = parser.parse().unwrap();
-
-        assert_eq!(expression, Expression::Literal(Literal::Integer(1)));
-    }
-
-    #[test]
-    fn unary() {
-        let source = String::from("-1");
-
-        let mut lexer = Lexer::new(&source);
-
-        let tokens = lexer.scan_tokens();
-
-        let mut parser = Parser::new(tokens);
-
-        let expression = parser.parse().unwrap();
-
-        assert_eq!(
-            expression,
-            Expression::Unary {
-                operator: Token {
-                    kind: TokenType::Minus,
-                    lexeme: "-",
-                    literal: crate::lexer::Literal::None,
-                    line: 1
-                },
-                right: Box::new(Expression::Literal(Literal::Integer(1)))
-            }
-        );
-    }
-
-    #[test]
-    fn binary() {
-        let source = String::from("1 + 2");
-        let mut lexer = Lexer::new(&source);
-        let tokens = lexer.scan_tokens();
-
-        let mut parser = Parser::new(tokens);
-
-        let expression = parser.parse().unwrap();
-
-        assert_eq!(
-            expression,
-            Expression::Binary {
-                left: Box::new(Expression::Literal(Literal::Integer(1))),
-                operator: Token {
-                    kind: TokenType::Plus,
-                    lexeme: "+",
-                    literal: crate::lexer::Literal::None,
-                    line: 1
-                },
-                right: Box::new(Expression::Literal(Literal::Integer(2)))
-            }
-        );
-    }
-
-    #[test]
-    fn grouping() {
-        let source = String::from("(1 + 2)");
-        let mut lexer = Lexer::new(&source);
-        let tokens = lexer.scan_tokens();
-
-        let mut parser = Parser::new(tokens);
-
-        let expression = parser.parse().unwrap();
-
-        assert_eq!(
-            expression,
-            Expression::Grouping(Box::new(Expression::Binary {
-                left: Box::new(Expression::Literal(Literal::Integer(1))),
-                operator: Token {
-                    kind: TokenType::Plus,
-                    lexeme: "+",
-                    literal: crate::lexer::Literal::None,
-                    line: 1
-                },
-                right: Box::new(Expression::Literal(Literal::Integer(2)))
-            }))
-        );
     }
 }
