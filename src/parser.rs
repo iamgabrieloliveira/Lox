@@ -56,12 +56,21 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) -> ParserResult<Statement<'a>> {
-        if self.peek().kind == TokenType::Var {
-            self.advance();
-            return self.variable_declaration();
-        } else {
-            return self.statement();
+        let result = {
+            match self.peek().kind {
+                TokenType::Var => {
+                    self.advance();
+                    self.variable_declaration()
+                }
+                _ => self.statement(),
+            }
+        };
+
+        if result.is_err() {
+            self.synchronize();
         }
+
+        result
     }
 
     fn variable_declaration(&mut self) -> ParserResult<Statement<'a>> {
@@ -80,8 +89,7 @@ impl<'a> Parser<'a> {
         self.consume(
             TokenType::Semicolon,
             "Expect ';' after variable declaration.",
-        )
-        .unwrap();
+        )?;
 
         Ok(Statement::Var {
             name: token,
@@ -90,12 +98,31 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> ParserResult<Statement<'a>> {
-        if self.peek().kind == TokenType::Print {
-            self.advance();
-            return self.print_statement();
+        let token = self.peek();
+
+        match token.kind {
+            TokenType::Print => {
+                self.advance();
+                self.print_statement()
+            }
+            TokenType::LeftBrace => {
+                self.advance();
+                Ok(Statement::Block(self.block()?))
+            }
+            _ => self.expression_statement(),
+        }
+    }
+
+    fn block(&mut self) -> ParserResult<Vec<Statement<'a>>> {
+        let mut statements = Vec::new();
+
+        while self.peek().kind != TokenType::RightBrace {
+            statements.push(self.declaration()?);
         }
 
-        self.expression_statement()
+        self.consume(TokenType::RightBrace, "Expect '}' after block.")?;
+
+        Ok(statements)
     }
 
     fn print_statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -115,7 +142,26 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> ParserResult<Expression<'a>> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> ParserResult<Expression<'a>> {
+        let expr = self.equality()?;
+
+        if self.peek().kind == TokenType::Equal {
+            let equals = self.advance().clone();
+
+            let value = self.assignment()?;
+
+            match expr {
+                Expression::Variable(token) => {
+                    return Ok(Expression::Assign(token, Box::new(value)));
+                }
+                _ => Self::error(equals, String::from("Invalid assignment target"))?,
+            }
+        }
+
+        Ok(expr)
     }
 
     fn equality(&mut self) -> ParserResult<Expression<'a>> {
@@ -303,6 +349,28 @@ impl<'a> Parser<'a> {
         }
 
         Self::error(token.clone(), message.to_string())
+    }
+
+    fn synchronize(&mut self) -> () {
+        self.advance();
+
+        while !self.is_end() {
+            if self.previous().kind == TokenType::Semicolon {
+                return;
+            }
+
+            match self.peek().kind {
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return,
+                _ => self.advance(),
+            };
+        }
     }
 
     fn error<T>(token: Token, message: String) -> ParserResult<T> {

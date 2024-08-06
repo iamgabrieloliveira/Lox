@@ -17,16 +17,24 @@ pub struct Interpreter<'a> {
     statements: Vec<Statement<'a>>,
 }
 
+fn is_truthy(literal: &Literal) -> bool {
+    match literal {
+        Literal::Nil => false,
+        Literal::Boolean(b) => *b,
+        _ => true,
+    }
+}
+
 impl<'a> Interpreter<'a> {
     pub fn new(statements: Vec<Statement<'a>>) -> Self {
         Self {
-            environment: Environment::new(),
+            environment: Environment::empty(),
             statements,
         }
     }
 
     pub fn interpret(&mut self) -> Result<(), InterpreterError<'a>> {
-        // todo: remove that clone
+        // todo: how to remove that clone
         for statement in &self.statements.clone() {
             self.execute(statement)?;
         }
@@ -38,14 +46,17 @@ impl<'a> Interpreter<'a> {
         match statement {
             Statement::Expression(expression) => self.evaluate(expression).map(|_| ()),
             Statement::Print(expression) => {
+                // maybe something else
                 let value = self.evaluate(expression)?;
+
                 println!("{}", value);
+
                 Ok(())
             }
             Statement::Var { name, expression } => {
                 match expression {
                     Some(expr) => {
-                        let value = self.evaluate(expr).unwrap();
+                        let value = self.evaluate(expr)?;
                         self.environment.define(name.lexeme, Some(value));
                     }
                     None => {
@@ -55,12 +66,46 @@ impl<'a> Interpreter<'a> {
 
                 Ok(())
             }
+            Statement::Block(statements) => {
+                let block_env = Environment::with_enclosing(self.environment.clone());
+                self.execute_block(statements, block_env)?;
+
+                Ok(())
+            }
         }
     }
 
-    pub fn evaluate(&self, expr: &Expression<'a>) -> InterpreterResult<'a, Literal> {
+    pub fn execute_block(
+        &mut self,
+        statements: &Vec<Statement<'a>>,
+        env: Environment<'a>,
+    ) -> Result<(), InterpreterError<'a>> {
+        let prev = self.environment.clone();
+
+        // Change the environment temporarly for this block's execution
+        self.environment = env;
+
+        for statement in statements {
+            let result = self.execute(statement);
+
+            if result.is_err() {
+                self.environment = prev;
+                return result;
+            }
+        }
+
+        self.environment = prev;
+
+        Ok(())
+    }
+
+    pub fn error<T>(token: Token<'a>, message: &'a str) -> Result<T, InterpreterError<'a>> {
+        Err(InterpreterError { token, message })
+    }
+
+    pub fn evaluate(&mut self, expr: &Expression<'a>) -> Result<Literal, InterpreterError<'a>> {
         match expr {
-            Expression::Literal(literal) => Ok(literal.clone()),
+            Expression::Literal(l) => Ok(l.clone()),
             Expression::Grouping(literal) => self.evaluate(&literal),
             Expression::Unary { operator, right } => self.evaluate_unary(operator, right),
             Expression::Binary {
@@ -69,45 +114,65 @@ impl<'a> Interpreter<'a> {
                 right,
             } => self.evaluate_binary(left, &operator, right),
             Expression::Variable(token) => {
-                let value = self.environment.get(token.lexeme);
+                let mut variable = self.environment.get(token.lexeme);
 
-                match value {
-                    Some(value) => match value {
-                        Some(value) => Ok(value.clone()),
-                        None => Ok(Literal::Nil),
-                    },
-                    None => Err(InterpreterError {
-                        token: token.clone(),
-                        message: "Undefined variable",
-                    }),
+                if variable.is_none() {
+                    variable = self
+                        .environment
+                        .enclosing
+                        .as_mut()
+                        .map(|env| env.get(token.lexeme))
+                        .flatten();
                 }
+
+                match variable {
+                    Some(value) => value.clone().map_or_else(|| Ok(Literal::Nil), Ok),
+                    None => Self::error(token.clone(), "Undefined variable"),
+                }
+            }
+            Expression::Assign(token, value) => {
+                let value = self.evaluate(value)?.clone();
+
+                let mut was_defined = self.environment.define(token.lexeme, Some(value.clone()));
+
+                if was_defined.is_none() {
+                    was_defined = self
+                        .environment
+                        .enclosing
+                        .as_mut()
+                        .map(|env| env.define(token.lexeme, Some(value.clone())))
+                        .flatten();
+                }
+
+                if was_defined.is_none() {
+                    return Self::error(token.clone(), "Undefined variable");
+                }
+
+                Ok(value)
             }
         }
     }
 
     pub fn evaluate_unary(
-        &self,
+        &mut self,
         operator: &Token<'a>,
         right: &Expression<'a>,
     ) -> InterpreterResult<'a, Literal> {
         let value = self.evaluate(&right)?;
 
         match operator.kind {
-            TokenType::Bang => Ok(Literal::Boolean(!self.is_truthy(&value))),
+            TokenType::Bang => Ok(Literal::Boolean(!is_truthy(&value))),
             TokenType::Minus => match value {
                 Literal::Integer(i) => Ok(Literal::Integer(-i)),
                 Literal::Float(f) => Ok(Literal::Float(-f)),
-                _ => Err(InterpreterError {
-                    token: operator.clone(),
-                    message: "Operand must be a number",
-                }),
+                _ => Self::error(operator.clone(), "Operand must be a number"),
             },
             _ => unreachable!(),
         }
     }
 
     fn evaluate_binary(
-        &self,
+        &mut self,
         left: &Expression<'a>,
         operator: &Token<'a>,
         right: &Expression<'a>,
@@ -164,21 +229,10 @@ impl<'a> Interpreter<'a> {
                 | TokenType::Star,
                 _,
                 _,
-            ) => Err(InterpreterError {
-                token: operator.clone(),
-                message: "Operands must be numbers",
-            }),
+            ) => Self::error(operator.clone(), "Operands must be numbers"),
             (TokenType::EqualEqual, left, right) => Ok(Literal::Boolean(left.eq(&right))),
             (TokenType::BangEqual, left, right) => Ok(Literal::Boolean(!left.eq(&right))),
             _ => unreachable!(),
-        }
-    }
-
-    pub fn is_truthy(&self, literal: &Literal) -> bool {
-        match literal {
-            Literal::Nil => false,
-            Literal::Boolean(b) => *b,
-            _ => true,
         }
     }
 }

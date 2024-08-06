@@ -1,7 +1,8 @@
 // program -> declaration* EOF ;
+// block -> "{" declaration "}"
 // declaration → variable_declaration | statement;
 // variable_declaration -> "var" IDENTIFIER ( "=" expression )? ";" ;
-// statement -> expr_statement | print_statement ;
+// statement -> expr_statement | print_statement | block;
 // expr_statement -> expression ";" ;
 // print_statment -> "print" expression ";" ;
 // expression -> literal | unary | binary | grouping ;
@@ -19,6 +20,7 @@ use crate::Token;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'a> {
     Expression(Expression<'a>),
+    Block(Vec<Statement<'a>>),
     Print(Expression<'a>),
     Var {
         name: Token<'a>,
@@ -33,6 +35,7 @@ pub enum Expression<'a> {
         operator: Token<'a>,
         right: Box<Expression<'a>>,
     },
+    Assign(Token<'a>, Box<Expression<'a>>),
     Binary {
         left: Box<Expression<'a>>,
         operator: Token<'a>,
