@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
 
         let then_branch = self.statement()?;
 
-        let else_branch = match self.peek().kind {
+        let otherwise_branch = match self.peek().kind {
             TokenType::Else => {
                 self.advance();
                 Some(self.statement()?)
@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
         return Ok(Statement::If {
             condition,
             then: Box::new(then_branch),
-            r#else: Box::new(else_branch),
+            otherwise: Box::new(otherwise_branch),
         });
     }
 
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
     }
 
     fn assignment(&mut self) -> ParserResult<Expression<'a>> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
 
         if self.peek().kind == TokenType::Equal {
             let equals = self.advance().clone();
@@ -186,6 +186,40 @@ impl<'a> Parser<'a> {
                     return Ok(Expression::Assign(token, Box::new(value)));
                 }
                 _ => Self::error(equals, String::from("Invalid assignment target"))?,
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> ParserResult<Expression<'a>> {
+        let mut expr = self.and()?;
+
+        while self.peek().kind == TokenType::Or {
+            let operator = self.advance().clone();
+            let right = self.equality()?;
+
+            expr = Expression::Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> ParserResult<Expression<'a>> {
+        let mut expr = self.equality()?;
+
+        while self.peek().kind == TokenType::And {
+            let operator = self.advance().clone();
+            let right = self.equality()?;
+
+            expr = Expression::Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
             }
         }
 

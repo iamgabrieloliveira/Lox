@@ -76,14 +76,14 @@ impl<'a> Interpreter<'a> {
             Statement::If {
                 condition,
                 then,
-                r#else,
+                otherwise,
             } => {
                 let condition = self.evaluate(condition)?;
 
                 if is_truthy(&condition) {
                     self.execute(then)?;
-                } else if let Some(else_branch) = r#else.deref() {
-                    self.execute(else_branch)?;
+                } else if let Some(s) = otherwise.deref() {
+                    self.execute(s)?;
                 }
 
                 Ok(())
@@ -166,6 +166,31 @@ impl<'a> Interpreter<'a> {
 
                 Ok(value)
             }
+            Expression::Logical {
+                left,
+                operator,
+                right,
+            } => match operator.kind {
+                TokenType::Or => {
+                    let left_value = self.evaluate(left)?;
+
+                    if is_truthy(&left_value) {
+                        return Ok(left_value);
+                    }
+
+                    Ok(self.evaluate(right)?)
+                }
+                TokenType::And => {
+                    let left_value = self.evaluate(left)?;
+
+                    if !is_truthy(&left_value) {
+                        return Ok(left_value);
+                    }
+
+                    Ok(self.evaluate(right)?)
+                }
+                _ => unreachable!(),
+            },
         }
     }
 

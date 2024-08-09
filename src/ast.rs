@@ -6,6 +6,10 @@
 // if_statement = "if" "(" condition ")" statement ( "else" statement )?
 // expr_statement -> expression ";" ;
 // print_statment -> "print" expression ";" ;
+// expression -> assignment ;
+// assignment -> IDENTIFIER "=" assignement | logical_or ;
+// logical_or -> logical_and ( "or" logical_and )* ;
+// logical_and -> equality ( "and" equality ;
 // expression -> literal | unary | binary | grouping ;
 // literal -> NUMBER | STRING | "true" | "false" | "nil" ;
 // grouping -> "(" expression ")" ;
@@ -24,7 +28,7 @@ pub enum Statement<'a> {
     If {
         condition: Expression<'a>,
         then: Box<Statement<'a>>,
-        r#else: Box<Option<Statement<'a>>>,
+        otherwise: Box<Option<Statement<'a>>>,
     },
     Block(Vec<Statement<'a>>),
     Print(Expression<'a>),
@@ -37,6 +41,11 @@ pub enum Statement<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'a> {
     Literal(Literal),
+    Logical {
+        left: Box<Expression<'a>>,
+        operator: Token<'a>,
+        right: Box<Expression<'a>>,
+    },
     Unary {
         operator: Token<'a>,
         right: Box<Expression<'a>>,
