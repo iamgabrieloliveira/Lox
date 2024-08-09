@@ -2,7 +2,8 @@
 // block -> "{" declaration "}"
 // declaration → variable_declaration | statement;
 // variable_declaration -> "var" IDENTIFIER ( "=" expression )? ";" ;
-// statement -> expr_statement | print_statement | block;
+// statement -> expr_statement | if_statement | print_statement | block;
+// if_statement = "if" "(" condition ")" statement ( "else" statement )?
 // expr_statement -> expression ";" ;
 // print_statment -> "print" expression ";" ;
 // expression -> literal | unary | binary | grouping ;
@@ -20,6 +21,11 @@ use crate::Token;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'a> {
     Expression(Expression<'a>),
+    If {
+        condition: Expression<'a>,
+        then: Box<Statement<'a>>,
+        r#else: Box<Option<Statement<'a>>>,
+    },
     Block(Vec<Statement<'a>>),
     Print(Expression<'a>),
     Var {

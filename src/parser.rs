@@ -105,12 +105,40 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.print_statement()
             }
+            TokenType::If => {
+                self.advance();
+                self.if_statement()
+            }
             TokenType::LeftBrace => {
                 self.advance();
                 Ok(Statement::Block(self.block()?))
             }
             _ => self.expression_statement(),
         }
+    }
+
+    fn if_statement(&mut self) -> ParserResult<Statement<'a>> {
+        self.consume(TokenType::LeftParen, "Expect '(' after if.")?;
+
+        let condition = self.expression()?;
+
+        self.consume(TokenType::RightParen, "Expect ')' after if condition.")?;
+
+        let then_branch = self.statement()?;
+
+        let else_branch = match self.peek().kind {
+            TokenType::Else => {
+                self.advance();
+                Some(self.statement()?)
+            }
+            _ => None,
+        };
+
+        return Ok(Statement::If {
+            condition,
+            then: Box::new(then_branch),
+            r#else: Box::new(else_branch),
+        });
     }
 
     fn block(&mut self) -> ParserResult<Vec<Statement<'a>>> {

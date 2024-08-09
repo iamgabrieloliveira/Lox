@@ -1,8 +1,7 @@
-var a = 10;
+var value = 5;
 
-{
-	var a = 15;
-	print a;
+if (value == 5) {
+    print "Hello";
+} else {
+    print "World";
 }
-
-print a;

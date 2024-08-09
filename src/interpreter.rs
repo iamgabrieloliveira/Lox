@@ -3,6 +3,7 @@ use crate::{
     environment::Environment,
     lexer::{Token, TokenType},
 };
+use std::ops::Deref;
 
 pub type InterpreterResult<'a, T> = std::result::Result<T, InterpreterError<'a>>;
 
@@ -69,6 +70,21 @@ impl<'a> Interpreter<'a> {
             Statement::Block(statements) => {
                 let block_env = Environment::with_enclosing(self.environment.clone());
                 self.execute_block(statements, block_env)?;
+
+                Ok(())
+            }
+            Statement::If {
+                condition,
+                then,
+                r#else,
+            } => {
+                let condition = self.evaluate(condition)?;
+
+                if is_truthy(&condition) {
+                    self.execute(then)?;
+                } else if let Some(else_branch) = r#else.deref() {
+                    self.execute(else_branch)?;
+                }
 
                 Ok(())
             }

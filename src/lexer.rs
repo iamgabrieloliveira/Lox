@@ -343,6 +343,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn add_token(&mut self, kind: TokenType, literal: Literal) {
+        // todo: search error
+        // byte index X is not a char boundary
+        // It's inside 'Y'
+        // Probably it's because multibyte chars: e.g: ê
         let text = &self.source[self.start..self.current];
 
         let token = Token {
