@@ -109,12 +109,31 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.if_statement()
             }
+            TokenType::While => {
+                self.advance();
+                self.parse_while()
+            }
             TokenType::LeftBrace => {
                 self.advance();
-                Ok(Statement::Block(self.block()?))
+                self.block()
             }
             _ => self.expression_statement(),
         }
+    }
+
+    fn parse_while(&mut self) -> ParserResult<Statement<'a>> {
+        self.consume(TokenType::LeftParen, "Expect '(' after while.")?;
+
+        let condition = self.expression()?;
+
+        self.consume(TokenType::RightParen, "Expect ')' after if condition.")?;
+
+        let body = self.statement()?;
+
+        Ok(Statement::While {
+            condition,
+            body: Box::new(body),
+        })
     }
 
     fn if_statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -141,7 +160,7 @@ impl<'a> Parser<'a> {
         });
     }
 
-    fn block(&mut self) -> ParserResult<Vec<Statement<'a>>> {
+    fn block(&mut self) -> ParserResult<Statement<'a>> {
         let mut statements = Vec::new();
 
         while self.peek().kind != TokenType::RightBrace {
@@ -150,7 +169,7 @@ impl<'a> Parser<'a> {
 
         self.consume(TokenType::RightBrace, "Expect '}' after block.")?;
 
-        Ok(statements)
+        Ok(Statement::Block(statements))
     }
 
     fn print_statement(&mut self) -> ParserResult<Statement<'a>> {

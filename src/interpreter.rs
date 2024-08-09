@@ -88,6 +88,13 @@ impl<'a> Interpreter<'a> {
 
                 Ok(())
             }
+            Statement::While { condition, body } => {
+                while is_truthy(&self.evaluate(condition)?) {
+                    self.execute(body)?;
+                }
+
+                Ok(())
+            }
         }
     }
 

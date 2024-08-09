@@ -2,9 +2,10 @@
 // block -> "{" declaration "}"
 // declaration → variable_declaration | statement;
 // variable_declaration -> "var" IDENTIFIER ( "=" expression )? ";" ;
-// statement -> expr_statement | if_statement | print_statement | block;
+// statement -> expr_statement | if_statement | print_statement |  while_statement | block;
 // if_statement = "if" "(" condition ")" statement ( "else" statement )?
 // expr_statement -> expression ";" ;
+// while_statement -> "while" "(" expression ")" statement ;
 // print_statment -> "print" expression ";" ;
 // expression -> assignment ;
 // assignment -> IDENTIFIER "=" assignement | logical_or ;
@@ -29,6 +30,10 @@ pub enum Statement<'a> {
         condition: Expression<'a>,
         then: Box<Statement<'a>>,
         otherwise: Box<Option<Statement<'a>>>,
+    },
+    While {
+        condition: Expression<'a>,
+        body: Box<Statement<'a>>,
     },
     Block(Vec<Statement<'a>>),
     Print(Expression<'a>),

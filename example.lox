@@ -1,3 +1,7 @@
-var name = nil or "Gabriel";
+var i = 1;
 
-print name;
+if (true) {
+	i = 10;
+}
+
+print i;
