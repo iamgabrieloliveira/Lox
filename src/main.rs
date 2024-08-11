@@ -6,7 +6,6 @@ mod lox;
 mod parser;
 
 use clap::Parser as ArgsParser;
-use interpreter::Interpreter;
 use lexer::Token;
 use std::path::PathBuf;
 
@@ -28,13 +27,5 @@ fn main() {
 
     let expression = parser.parse().unwrap();
 
-    let mut interpreter = Interpreter::new(expression);
-
-    let result = interpreter.interpret();
-
-    if result.is_err() {
-        let error = result.unwrap_err();
-        println!("{:?}", error);
-        std::process::exit(65);
-    }
+    interpreter::run(expression);
 }
