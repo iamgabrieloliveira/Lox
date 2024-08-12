@@ -27,5 +27,11 @@ fn main() {
 
     let expression = parser.parse().unwrap();
 
-    interpreter::run(expression);
+    match interpreter::run(expression) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Error: {:?}", e);
+            std::process::exit(1);
+        }
+    }
 }

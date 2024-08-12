@@ -4,20 +4,32 @@ use crate::{
     lexer::{Token, TokenType},
 };
 
-pub type InterpreterResult<'a> = std::result::Result<Environment<'a>, InterpreterError<'a>>;
+type EvaluationResult<'a> = Result<(Literal, Environment<'a>), InterpreterError<'a>>;
+type StatementResult<'a> = Result<Environment<'a>, InterpreterError<'a>>;
 
-pub fn run(statements: Vec<Statement>) {
+#[derive(Debug, Clone)]
+pub struct InterpreterError<'a> {
+    pub token: Token<'a>,
+    pub message: &'a str,
+}
+
+pub fn run(statements: Vec<Statement>) -> Result<(), InterpreterError> {
     let mut env = Environment::head();
 
     for statement in statements {
-        env = execute(statement, env).unwrap();
+        match execute(statement, env) {
+            Ok(e) => env = e,
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                return Err(e);
+            }
+        }
     }
+
+    Ok(())
 }
 
-fn execute<'a>(
-    statement: Statement<'a>,
-    env: Environment<'a>,
-) -> Result<Environment<'a>, InterpreterError<'a>> {
+fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResult<'a> {
     match statement {
         Statement::Expression(expr) => execute_expression(expr, env),
         Statement::Print(expr) => execute_print(expr, env),
@@ -32,80 +44,87 @@ fn execute<'a>(
     }
 }
 
+fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+    match expression {
+        Expression::Variable(token) => evaluate_var(token),
+        Expression::Assign(token, value) => evaluate_assign(token, *value),
+        Expression::Literal(v) => Ok((v.clone(), env)),
+        Expression::Unary { operator, right } => evaluate_unary(operator, right, env),
+        Expression::Grouping(literal) => evaluate(*literal, env),
+        Expression::Binary {
+            left,
+            operator,
+            right,
+        } => evaluate_binary(left, &operator, right, env),
+        Expression::Logical {
+            left,
+            operator,
+            right,
+        } => evaluate_logical(left, operator, right, env),
+    }
+}
+
+fn is_truthy(value: Literal) -> bool {
+    match value {
+        Literal::Boolean(v) => v,
+        Literal::Nil => false,
+        _ => true,
+    }
+}
+
+fn error<'a, T>(token: Token<'a>, message: &'a str) -> Result<T, InterpreterError<'a>> {
+    Err(InterpreterError { token, message })
+}
+
 fn evaluate_unary<'a>(
     operator: Token<'a>,
     right: Box<Expression<'a>>,
     env: Environment<'a>,
-) -> Result<(Literal, Environment<'a>), InterpreterError<'a>> {
+) -> EvaluationResult<'a> {
     let (right, env) = evaluate(*right, env)?;
 
-    let value = match operator.kind {
+    match operator.kind {
+        TokenType::Bang => Ok((Literal::Boolean(!is_truthy(right)), env)),
         TokenType::Minus => match right {
-            Literal::Integer(n) => Literal::Integer(-n),
-            Literal::Float(n) => Literal::Float(-n),
-            _ => panic!("Unary minus can only be applied to numbers"),
+            Literal::Integer(i) => Ok((Literal::Integer(-i), env)),
+            Literal::Float(f) => Ok((Literal::Float(-f), env)),
+            _ => error(operator, "Operand must be a number"),
         },
-        TokenType::Bang => Literal::Boolean(!is_truthy(right)),
         _ => unreachable!(),
-    };
-
-    Ok((value, env))
+    }
 }
 
 fn evaluate_binary<'a>(
     _left: Box<Expression>,
     _operator: &Token,
     _right: Box<Expression>,
-) -> Result<Literal, InterpreterError<'a>> {
-    Ok(Literal::Integer(1))
-}
-
-fn evaluate_var<'a>() {
+    _env: Environment<'a>,
+) -> EvaluationResult<'a> {
     todo!()
 }
 
-fn evaluate<'a>(
-    expression: Expression<'a>,
-    env: Environment<'a>,
-) -> Result<(Literal, Environment<'a>), InterpreterError<'a>> {
-    match expression {
-        Expression::Literal(l) => Ok((l.clone(), env)),
-        Expression::Grouping(literal) => evaluate(*literal, env),
-        Expression::Unary { operator, right } => evaluate_unary(operator, right, env),
-        Expression::Binary {
-            left,
-            operator,
-            right,
-        } => evaluate_binary(left, &operator, right).map(|_| (Literal::Nil, env)),
-        Expression::Variable(token) => {
-            let value = env.get_deep(token.lexeme).unwrap().clone();
-            Ok((value.unwrap(), env))
-        }
-        Expression::Assign(token, value) => {
-            let (value, mut env) = evaluate(*value, env)?;
-
-            env.define_deep(token.lexeme, Some(value.clone()));
-
-            Ok((value, env))
-        }
-        Expression::Logical {
-            left,
-            operator,
-            right,
-        } => {
-            todo!()
-        }
-    }
+fn evaluate_var<'a>(token: Token<'a>) -> EvaluationResult<'a> {
+    todo!()
 }
 
-fn execute_expression<'a>(
-    expression: Expression<'a>,
-    env: Environment<'a>,
-) -> InterpreterResult<'a> {
+fn evaluate_assign<'a>(token: Token<'a>, value: Expression<'a>) -> EvaluationResult<'a> {
+    todo!()
+}
+
+fn evaluate_logical<'a>(
+    left: Box<Expression<'a>>,
+    operator: Token<'a>,
+    right: Box<Expression<'a>>,
+    _env: Environment<'a>,
+) -> EvaluationResult<'a> {
+    todo!()
+}
+
+fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
     evaluate(expression, env).map(|(_, env)| env)
 }
 
-fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> InterpreterResult<'a> {
+fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
     let (value, env) = evaluate(expression, env)?;
 
     println!("{}", value);
@@ -134,10 +153,7 @@ fn execute_var<'a>(
     }
 }
 
-fn execute_block<'a>(
-    statements: Vec<Statement<'a>>,
-    env: Environment<'a>,
-) -> InterpreterResult<'a> {
+fn execute_block<'a>(statements: Vec<Statement<'a>>, env: Environment<'a>) -> StatementResult<'a> {
     // Here we 'borrow' the environment and create a new one with the block as the parent
     // as soon as the block is done executing,
     // we return the parent environment and the block is dropped
@@ -155,7 +171,7 @@ fn execute_if<'a>(
     then: Box<Statement<'a>>,
     otherwise: Box<Option<Statement<'a>>>,
     env: Environment<'a>,
-) -> InterpreterResult<'a> {
+) -> StatementResult<'a> {
     let (value, mut env) = evaluate(condition, env)?;
 
     if is_truthy(value) {
@@ -171,7 +187,7 @@ fn execute_while<'a>(
     condition: Expression<'a>,
     body: Box<Statement<'a>>,
     mut env: Environment<'a>,
-) -> InterpreterResult<'a> {
+) -> StatementResult<'a> {
     loop {
         let (val, env_) = evaluate(condition.clone(), env)?;
 
@@ -185,18 +201,4 @@ fn execute_while<'a>(
     }
 
     Ok(env)
-}
-
-fn is_truthy(value: Literal) -> bool {
-    match value {
-        Literal::Boolean(v) => v,
-        Literal::Nil => false,
-        _ => true,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct InterpreterError<'a> {
-    pub token: Token<'a>,
-    pub message: &'a str,
 }
