@@ -31,7 +31,7 @@ fn is_term(kind: TokenType) -> bool {
 }
 
 fn is_factor(kind: TokenType) -> bool {
-    matches!(kind, TokenType::Slash | TokenType::Star)
+    matches!(kind, TokenType::Slash | TokenType::Star | TokenType::Module)
 }
 
 fn is_unary(kind: TokenType) -> bool {

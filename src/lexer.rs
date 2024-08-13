@@ -16,6 +16,7 @@ pub enum TokenType {
     Semicolon,
     Slash,
     Star,
+    Module,
 
     // One or two character tokens.
     Bang,
@@ -103,6 +104,10 @@ pub struct Lexer<'a> {
     line: u32,
 }
 
+fn is_valid_identifier_char(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
 impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
@@ -140,6 +145,7 @@ impl<'a> Lexer<'a> {
             "+" => self.add_token(TokenType::Plus, Literal::None),
             ";" => self.add_token(TokenType::Semicolon, Literal::None),
             "*" => self.add_token(TokenType::Star, Literal::None),
+            "%" => self.add_token(TokenType::Module, Literal::None),
             "!" => {
                 let token = if self.matches("=") {
                     TokenType::BangEqual
@@ -197,7 +203,7 @@ impl<'a> Lexer<'a> {
                     self.read_number();
                 }
 
-                if char.is_alphabetic() {
+                if is_valid_identifier_char(char) {
                     self.read_identifier();
                 }
             }
@@ -209,7 +215,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_identifier(&mut self) {
-        while self.peek_char().is_alphabetic() {
+        while is_valid_identifier_char(self.peek_char()) {
             self.advance();
         }
 
@@ -573,6 +579,21 @@ mod tests {
         assert_eq!(first.line, 1);
         assert_eq!(first.lexeme, "hello");
         assert_eq!(first.literal, Literal::String(String::from("hello")));
+    }
+
+    #[test]
+    fn identifier_with_underscore() {
+        let mut lexer = Lexer::new("hello_hello");
+
+        let result = lexer.scan_tokens();
+        let mut tokens = result.iter();
+
+        let first = tokens.next().unwrap();
+
+        assert_eq!(first.kind, TokenType::Identifier);
+        assert_eq!(first.line, 1);
+        assert_eq!(first.lexeme, "hello_hello");
+        assert_eq!(first.literal, Literal::String(String::from("hello_hello")));
     }
 
     #[test]

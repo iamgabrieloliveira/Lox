@@ -46,8 +46,8 @@ fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResul
 
 fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
     match expression {
-        Expression::Variable(token) => evaluate_var(token),
-        Expression::Assign(token, value) => evaluate_assign(token, *value),
+        Expression::Variable(token) => evaluate_var(token, env),
+        Expression::Assign(token, value) => evaluate_assign(token, *value, env),
         Expression::Literal(v) => Ok((v.clone(), env)),
         Expression::Unary { operator, right } => evaluate_unary(operator, right, env),
         Expression::Grouping(literal) => evaluate(*literal, env),
@@ -55,7 +55,7 @@ fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationR
             left,
             operator,
             right,
-        } => evaluate_binary(left, &operator, right, env),
+        } => evaluate_binary(left, operator, right, env),
         Expression::Logical {
             left,
             operator,
@@ -64,9 +64,9 @@ fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationR
     }
 }
 
-fn is_truthy(value: Literal) -> bool {
+fn is_truthy(value: &Literal) -> bool {
     match value {
-        Literal::Boolean(v) => v,
+        Literal::Boolean(v) => *v,
         Literal::Nil => false,
         _ => true,
     }
@@ -84,7 +84,7 @@ fn evaluate_unary<'a>(
     let (right, env) = evaluate(*right, env)?;
 
     match operator.kind {
-        TokenType::Bang => Ok((Literal::Boolean(!is_truthy(right)), env)),
+        TokenType::Bang => Ok((Literal::Boolean(!is_truthy(&right)), env)),
         TokenType::Minus => match right {
             Literal::Integer(i) => Ok((Literal::Integer(-i), env)),
             Literal::Float(f) => Ok((Literal::Float(-f), env)),
@@ -95,29 +95,139 @@ fn evaluate_unary<'a>(
 }
 
 fn evaluate_binary<'a>(
-    _left: Box<Expression>,
-    _operator: &Token,
-    _right: Box<Expression>,
-    _env: Environment<'a>,
+    left: Box<Expression<'a>>,
+    operator: Token<'a>,
+    right: Box<Expression<'a>>,
+    env: Environment<'a>,
 ) -> EvaluationResult<'a> {
-    todo!()
+    let (left, env) = evaluate(*left, env)?;
+    let (right, env) = evaluate(*right, env)?;
+
+    // TODO: Better error handling
+    let value = match (left, operator.kind, right) {
+        (Literal::Integer(l), TokenType::Plus, Literal::Integer(r)) => Literal::Integer(l + r),
+        (Literal::Float(l), TokenType::Plus, Literal::Float(r)) => Literal::Float(l + r),
+
+        (Literal::Integer(l), TokenType::Minus, Literal::Integer(r)) => Literal::Integer(l + r),
+        (Literal::Float(l), TokenType::Minus, Literal::Float(r)) => Literal::Float(l + r),
+
+        (Literal::Integer(l), TokenType::Star, Literal::Integer(r)) => Literal::Integer(l * r),
+        (Literal::Float(l), TokenType::Star, Literal::Float(r)) => Literal::Float(l * r),
+
+        (Literal::Integer(l), TokenType::Slash, Literal::Integer(r)) => Literal::Integer(l / r),
+        (Literal::Float(l), TokenType::Slash, Literal::Float(r)) => Literal::Float(l / r),
+
+        (Literal::Integer(l), TokenType::Module, Literal::Integer(r)) => Literal::Integer(l % r),
+        (Literal::Float(l), TokenType::Module, Literal::Float(r)) => Literal::Float(l % r),
+
+        (Literal::String(l), TokenType::Plus, Literal::String(r)) => {
+            Literal::String(format!("{}{}", l, r))
+        }
+
+        (Literal::Integer(l), TokenType::Greater, Literal::Integer(r)) => Literal::Boolean(l > r),
+        (Literal::Float(l), TokenType::Greater, Literal::Float(r)) => Literal::Boolean(l > r),
+
+        (Literal::Integer(l), TokenType::GreaterEqual, Literal::Integer(r)) => {
+            Literal::Boolean(l >= r)
+        }
+        (Literal::Float(l), TokenType::GreaterEqual, Literal::Float(r)) => Literal::Boolean(l >= r),
+
+        (Literal::Integer(l), TokenType::Less, Literal::Integer(r)) => Literal::Boolean(l < r),
+        (Literal::Float(l), TokenType::Less, Literal::Float(r)) => Literal::Boolean(l < r),
+
+        (Literal::Integer(l), TokenType::LessEqual, Literal::Integer(r)) => {
+            Literal::Boolean(l <= r)
+        }
+        (Literal::Float(l), TokenType::LessEqual, Literal::Float(r)) => Literal::Boolean(l <= r),
+
+        (
+            _,
+            TokenType::Plus
+            | TokenType::Minus
+            | TokenType::Star
+            | TokenType::Slash
+            | TokenType::Greater
+            | TokenType::GreaterEqual
+            | TokenType::Less
+            | TokenType::LessEqual,
+            _,
+        ) => error(operator.clone(), "Operands must numbers")?,
+
+        (l, TokenType::EqualEqual, r) => Literal::Boolean(l == r),
+        (l, TokenType::BangEqual, r) => Literal::Boolean(l != r),
+        _ => unreachable!(),
+    };
+
+    Ok((value, env))
 }
 
-fn evaluate_var<'a>(token: Token<'a>) -> EvaluationResult<'a> {
-    todo!()
+fn evaluate_var<'a>(token: Token<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+    match env.get_deep(token.lexeme) {
+        Some(v) => match v {
+            // TODO:
+            // Check if that clone is removable
+            Some(value) => Ok((value.clone(), env)),
+            None => Ok((Literal::Nil, env)),
+        },
+        None => error(token, "Variable not declared"),
+    }
 }
 
-fn evaluate_assign<'a>(token: Token<'a>, value: Expression<'a>) -> EvaluationResult<'a> {
-    todo!()
+fn evaluate_assign<'a>(
+    token: Token<'a>,
+    value: Expression<'a>,
+    env: Environment<'a>,
+) -> EvaluationResult<'a> {
+    let (value, mut env) = evaluate(value, env)?;
+
+    match env.define_deep(token.lexeme, Some(value)) {
+        Some(v) => match v {
+            Some(value) => Ok((value.clone(), env)),
+            None => Ok((Literal::Nil, env)),
+        },
+        None => error(token, "Attempt to assign a variable that does not exist"),
+    }
 }
 
 fn evaluate_logical<'a>(
     left: Box<Expression<'a>>,
     operator: Token<'a>,
     right: Box<Expression<'a>>,
-    _env: Environment<'a>,
+    env: Environment<'a>,
 ) -> EvaluationResult<'a> {
-    todo!()
+    match operator.kind {
+        TokenType::Or => {
+            let (left, env) = evaluate(*left, env)?;
+
+            if is_truthy(&left) {
+                return Ok((left, env));
+            }
+
+            let (right, env) = evaluate(*right, env)?;
+
+            if is_truthy(&right) {
+                return Ok((right, env));
+            }
+
+            return Ok((Literal::Nil, env));
+        }
+        TokenType::And => {
+            let (left, env) = evaluate(*left, env)?;
+
+            if is_truthy(&left) {
+                let (right, env) = evaluate(*right, env)?;
+
+                if is_truthy(&right) {
+                    return Ok((right, env));
+                }
+
+                return Ok((Literal::Nil, env));
+            }
+
+            return Ok((Literal::Nil, env));
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
@@ -154,6 +264,8 @@ fn execute_var<'a>(
 }
 
 fn execute_block<'a>(statements: Vec<Statement<'a>>, env: Environment<'a>) -> StatementResult<'a> {
+    // TODO:
+    // Fix Nested Scopes
     // Here we 'borrow' the environment and create a new one with the block as the parent
     // as soon as the block is done executing,
     // we return the parent environment and the block is dropped
@@ -174,7 +286,7 @@ fn execute_if<'a>(
 ) -> StatementResult<'a> {
     let (value, mut env) = evaluate(condition, env)?;
 
-    if is_truthy(value) {
+    if is_truthy(&value) {
         env = execute(*then, env)?;
     } else if let Some(e) = *otherwise {
         env = execute(e, env)?;
@@ -193,7 +305,7 @@ fn execute_while<'a>(
 
         env = env_;
 
-        if !is_truthy(val) {
+        if !is_truthy(&val) {
             break;
         }
 
