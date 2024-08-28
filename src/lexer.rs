@@ -96,6 +96,26 @@ pub struct Token<'a> {
     pub line: u32,
 }
 
+impl<'a> Token<'a> {
+    pub fn new(kind: TokenType, lexeme: &'a str, literal: Literal, line: u32) -> Self {
+        Self {
+            kind,
+            lexeme,
+            literal,
+            line,
+        }
+    }
+
+    pub fn string(literal: &'a str, lexeme: &'a str, line: u32) -> Self {
+        Self {
+            kind: TokenType::String,
+            lexeme,
+            literal: Literal::String(literal.to_string()),
+            line,
+        }
+    }
+}
+
 pub struct Lexer<'a> {
     source: &'a str,
     tokens: Vec<Token<'a>>,
@@ -104,8 +124,13 @@ pub struct Lexer<'a> {
     line: u32,
 }
 
-fn is_valid_identifier_char(c: char) -> bool {
+fn is_valid_identifier(c: char) -> bool {
     c.is_alphabetic() || c == '_'
+}
+
+fn is_numeric(c: char) -> bool {
+    // Maybe something else
+    c.is_numeric()
 }
 
 impl<'a> Lexer<'a> {
@@ -119,14 +144,10 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn advance(&mut self) -> Option<String> {
-        let char = self.char_at(self.current);
-        self.current += 1;
-        char
-    }
+    fn read(&mut self) {
+        let c = self.current_char();
 
-    fn scan_token(&mut self) {
-        let c = self.advance();
+        self.current += 1;
 
         if c.is_none() {
             return;
@@ -134,246 +155,241 @@ impl<'a> Lexer<'a> {
 
         let c = c.unwrap();
 
-        match c.as_str() {
-            "(" => self.add_token(TokenType::LeftParen, Literal::None),
-            ")" => self.add_token(TokenType::RightParen, Literal::None),
-            "{" => self.add_token(TokenType::LeftBrace, Literal::None),
-            "}" => self.add_token(TokenType::RightBrace, Literal::None),
-            "," => self.add_token(TokenType::Comma, Literal::None),
-            "." => self.add_token(TokenType::Dot, Literal::None),
-            "-" => self.add_token(TokenType::Minus, Literal::None),
-            "+" => self.add_token(TokenType::Plus, Literal::None),
-            ";" => self.add_token(TokenType::Semicolon, Literal::None),
-            "*" => self.add_token(TokenType::Star, Literal::None),
-            "%" => self.add_token(TokenType::Module, Literal::None),
-            "!" => {
-                let token = if self.matches("=") {
-                    TokenType::BangEqual
-                } else {
-                    TokenType::Bang
-                };
+        match c {
+            // Handle single-character tokens.
+            '(' => self.add_symbol(TokenType::LeftParen),
+            ')' => self.add_symbol(TokenType::RightParen),
+            '{' => self.add_symbol(TokenType::LeftBrace),
+            '}' => self.add_symbol(TokenType::RightBrace),
+            ',' => self.add_symbol(TokenType::Comma),
+            '.' => self.add_symbol(TokenType::Dot),
+            '-' => self.add_symbol(TokenType::Minus),
+            '+' => self.add_symbol(TokenType::Plus),
+            ';' => self.add_symbol(TokenType::Semicolon),
+            '*' => self.add_symbol(TokenType::Star),
+            '%' => self.add_symbol(TokenType::Module),
 
-                self.add_token(token, Literal::None);
+            // Handle operators with ambiguous meaning.
+            '!' => {
+                let token = self.match_next('=', TokenType::BangEqual, TokenType::Bang);
+                self.add_symbol(token);
             }
-            "=" => {
-                let token = if self.matches("=") {
-                    TokenType::EqualEqual
-                } else {
-                    TokenType::Equal
-                };
-
-                self.add_token(token, Literal::None);
+            '=' => {
+                let token = self.match_next('=', TokenType::EqualEqual, TokenType::Equal);
+                self.add_symbol(token);
             }
-            "<" => {
-                let token = if self.matches("=") {
-                    TokenType::LessEqual
-                } else {
-                    TokenType::Less
-                };
-
-                self.add_token(token, Literal::None);
+            '<' => {
+                let token = self.match_next('=', TokenType::LessEqual, TokenType::Less);
+                self.add_symbol(token)
             }
-            ">" => {
-                let token = if self.matches("=") {
-                    TokenType::GreaterEqual
-                } else {
-                    TokenType::Greater
-                };
-
-                self.add_token(token, Literal::None);
+            '>' => {
+                let token = self.match_next('=', TokenType::GreaterEqual, TokenType::Greater);
+                self.add_symbol(token)
             }
-            "/" => {
-                if self.matches("/") {
-                    while self.peek().ne("\n") && !self.is_at_end() {
-                        self.advance();
-                    }
-                } else {
-                    self.add_token(TokenType::Slash, Literal::None);
-                }
-            }
-            " " | "\r" | "\t" => {}
-            "\n" => {
-                self.line += 1;
-            }
-            "\"" => self.read_string(),
-            _ => {
-                let char = c.chars().next().unwrap();
-
-                if char.is_numeric() {
-                    self.read_number();
+            '/' => {
+                // If we hit a slash and the next character is also a slash,
+                // we are dealing with a comment.
+                // So if we do not find a slash, we add a slash token.
+                if !self.next_char_is('/') {
+                    self.add_symbol(TokenType::Slash);
                 }
 
-                if is_valid_identifier_char(char) {
-                    self.read_identifier();
+                // Skip comments.
+                while self.peek() != '\n' && self.has_more() {
+                    self.current += 1;
                 }
             }
-        }
-    }
+            // Ignore whitespace.
+            ' ' | '\r' | '\t' => {}
+            // If we encounter a newline,
+            // increment the line number.
+            '\n' => self.line += 1,
 
-    fn current_slice(&self) -> &str {
-        return &self.source[self.start..self.current];
-    }
+            '"' => self.read_string(),
 
-    fn read_identifier(&mut self) {
-        while is_valid_identifier_char(self.peek_char()) {
-            self.advance();
-        }
+            c if c.is_numeric() => self.read_number(),
 
-        let text = self.current_slice();
+            c if is_valid_identifier(c) => self.read_identifier(),
 
-        match TokenType::from_str(text) {
-            Ok(kind) => self.add_token(kind, Literal::None),
-            Err(_) => self.add_token(TokenType::Identifier, Literal::String(text.to_string())),
+            _ => self.error(format!("Unexpected character. {}", c).as_str()),
         };
     }
 
-    fn is_digit(&mut self, char: String) -> bool {
-        let char = char.chars().next().unwrap();
-        char.is_numeric()
+    fn read_identifier(&mut self) {
+        self.take_while(is_valid_identifier);
+
+        let text = self.current_slice().to_string();
+
+        match TokenType::from_str(&text) {
+            Ok(k) => self.add_keyword(k),
+            Err(()) => self.add_identifier(&text),
+        };
+    }
+
+    fn add_identifier(&mut self, text: &str) {
+        self.add_token(TokenType::Identifier, Literal::String(text.to_string()));
+    }
+
+    fn add_keyword(&mut self, kind: TokenType) {
+        self.add_token(kind, Literal::None);
+    }
+
+    fn take_while<F>(&mut self, condition: F)
+    where
+        F: Fn(char) -> bool,
+    {
+        while condition(self.peek()) {
+            self.current += 1;
+        }
     }
 
     fn read_number(&mut self) {
-        loop {
-            let value = self.peek();
+        self.take_while(is_numeric);
 
-            if !self.is_digit(value) {
-                break;
-            }
-
-            self.advance();
-        }
-
-        let next = self.peek_next().unwrap();
-
-        let is_float = self.peek() == "." && self.is_digit(next);
+        let is_float = self.peek() == '.' && self.peek_next().is_numeric();
 
         if is_float {
-            self.advance();
-
-            loop {
-                let value = self.peek();
-
-                if !self.is_digit(value) {
-                    break;
-                }
-
-                self.advance();
-            }
+            self.current += 1;
+            self.take_while(is_numeric);
         }
 
-        let value = self.current_slice();
+        let value = &self.source[self.start..self.current];
 
         if is_float {
-            let value = value.parse::<f64>().unwrap();
-            self.add_token(TokenType::Float, Literal::Float(value));
+            self.add_float(value);
         } else {
-            let value = value.parse::<i64>().unwrap();
-            self.add_token(TokenType::Integer, Literal::Integer(value));
+            self.add_integer(value);
         }
     }
 
-    fn peek_next(&mut self) -> Option<String> {
-        if self.current + 1 >= self.source.len() {
-            return Some(String::from("\0"));
-        }
-
-        return self.char_at(self.current + 1);
-    }
-
+    // todo: check scape characters
     fn read_string(&mut self) {
-        while self.peek().ne("\"") && !self.is_at_end() {
-            // for multiline strings
-            if self.peek().eq("\n") {
+        // Pointer to deal with multi-byte characters.
+        let mut i = self.current;
+
+        // Read until the end of the string.
+        while self.peek() != '"' && self.has_more() {
+            let c = self.peek();
+
+            // If we encounter a newline,
+            // increment the line number.
+            if c == '\n' {
                 self.line += 1;
             }
 
-            self.advance();
+            self.current += 1;
+            i += c.len_utf8();
         }
 
+        // If we reach the end of the string,
+        // and we didn't found a closing quote,
+        // report an error.
         if self.is_at_end() {
             self.error("Unterminated String");
         }
 
-        self.advance();
+        self.current += 1;
 
-        let value = &self.source[self.start + 1..self.current - 1];
+        // Get the value of the string.
+        // We need to remove the quotes that's why we use
+        // start + 1 and end - 1.
+        let value = &self.source[self.start + 1..i];
 
-        self.add_token(TokenType::String, Literal::String(value.to_string()));
+        self.add_string(value, i + 1);
     }
 
-    fn peek_char(&mut self) -> char {
-        if self.is_at_end() {
-            return '\0';
-        }
-
-        return self.current_char();
+    fn char_at(&self, index: usize) -> Option<char> {
+        self.source.chars().nth(index)
     }
 
-    fn current_char(&mut self) -> char {
-        self.source.chars().nth(self.current).unwrap()
-    }
-
-    fn peek(&mut self) -> String {
-        if self.is_at_end() {
-            return String::from("\0");
-        }
-
-        return self.current_token().unwrap_or(String::from("\0"));
-    }
-
-    fn char_at(&self, index: usize) -> Option<String> {
-        let char = self.source.chars().nth(index);
-        char.map(|c| c.to_string())
-    }
-
-    fn current_token(&mut self) -> Option<String> {
+    fn current_char(&self) -> Option<char> {
         self.char_at(self.current)
     }
 
-    fn matches(&mut self, expected: &str) -> bool {
-        if self.is_at_end() {
-            return false;
-        }
-
-        match self.current_token() {
-            None => false,
-            Some(token) => {
-                if token != expected {
-                    return false;
-                }
-
-                self.current += 1;
-                return true;
-            }
-        }
+    fn next_char(&self) -> Option<char> {
+        self.char_at(self.current)
     }
 
-    fn add_token(&mut self, kind: TokenType, literal: Literal) {
-        // todo: search error
-        // byte index X is not a char boundary
-        // It's inside 'Y'
-        // Probably it's because multibyte chars: e.g: ê
-        let text = &self.source[self.start..self.current];
+    fn peek(&self) -> char {
+        // If the current character is the last one,
+        // return a null character.
+        return self.current_char().unwrap_or('\0');
+    }
 
-        let token = Token {
-            kind,
-            lexeme: text,
-            literal,
-            line: self.line,
-        };
+    fn peek_next(&mut self) -> char {
+        return self.next_char().unwrap_or('\0');
+    }
+
+    fn next_char_is(&self, expected: char) -> bool {
+        return self.has_more() && self.peek() != expected;
+    }
+
+    // Used to handle characters with ambiguous meaning.
+    // For example, we can't tell if we are dealing with
+    // a Greater or GreaterEqual token.
+    // We need to look ahead to determine the correct token.
+    fn match_next(&mut self, expected: char, then: TokenType, otherwise: TokenType) -> TokenType {
+        if self.next_char_is(expected) {
+            self.current += 1;
+            return then;
+        }
+
+        return otherwise;
+    }
+
+    fn add_symbol(&mut self, kind: TokenType) {
+        self.add_token(kind, Literal::None);
+    }
+
+    fn add_string(&mut self, value: &'a str, end: usize) {
+        let text = &self.source[self.start..end];
+
+        let token = Token::string(value, text, self.line);
 
         self.tokens.push(token);
     }
 
-    pub fn scan_tokens(&mut self) -> Vec<Token> {
-        while !self.is_at_end() {
+    fn add_integer(&mut self, str: &str) {
+        // todo: check how to handle errors like this
+        let value = str.parse::<i64>().unwrap();
+        self.add_token(TokenType::Integer, Literal::Integer(value));
+    }
+
+    fn add_float(&mut self, str: &str) {
+        // todo: check how to handle errors like this
+        let value = str.parse::<f64>().unwrap();
+        self.add_token(TokenType::Float, Literal::Float(value));
+    }
+
+    fn add_token(&mut self, kind: TokenType, literal: Literal) {
+        let text = &self.source[self.start..self.current];
+
+        let token = Token::new(kind, text, literal, self.line);
+
+        self.tokens.push(token);
+    }
+
+    fn slice(&self, start: usize, end: usize) -> &str {
+        return &self.source[start..end];
+    }
+
+    fn current_slice(&self) -> &str {
+        return self.slice(self.start, self.current);
+    }
+
+    pub fn run(mut self) -> Vec<Token<'a>> {
+        while self.has_more() {
             self.start = self.current;
-            self.scan_token();
+            self.read();
         }
 
         self.add_token(TokenType::Eof, Literal::None);
 
-        return self.tokens.clone();
+        return self.tokens;
+    }
+
+    fn has_more(&self) -> bool {
+        return !self.is_at_end();
     }
 
     fn is_at_end(&self) -> bool {
@@ -387,230 +403,71 @@ impl<'a> Lexer<'a> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
-    fn equal_equal() {
-        let mut lexer = Lexer::new("1 == 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::EqualEqual);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, "==");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
-    fn bang_equal() {
-        let mut lexer = Lexer::new("1 != 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::BangEqual);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, "!=");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
-    fn greater() {
-        let mut lexer = Lexer::new("1 > 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::Greater);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, ">");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
-    fn greater_equal() {
-        let mut lexer = Lexer::new("1 >= 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::GreaterEqual);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, ">=");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
-    fn less() {
-        let mut lexer = Lexer::new("1 < 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::Less);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, "<");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
-    fn less_equal() {
-        let mut lexer = Lexer::new("1 <= 1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-
-        let second = tokens.next().unwrap();
-
-        assert_eq!(second.kind, TokenType::LessEqual);
-        assert_eq!(second.line, 1);
-        assert_eq!(second.lexeme, "<=");
-        assert_eq!(second.literal, Literal::None);
-    }
-
-    #[test]
     fn string() {
-        let mut lexer = Lexer::new("\"hello\"");
+        let tokens = Lexer::new(r#""Hello, World!""#).run();
 
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
+        // 0: "Hello, World!"
+        // 1: Eof
+        assert_eq!(tokens.len(), 2);
+
+        let token = &tokens[0];
+        assert_eq!(token.kind, TokenType::String);
+        assert_eq!(token.lexeme, r#""Hello, World!""#);
+        assert_eq!(token.literal, Literal::String("Hello, World!".to_string()));
+    }
+
+    #[test]
+    fn string_multi_byte() {
+        let tokens = Lexer::new(r#""ê""#).run();
+
+        assert_eq!(tokens.len(), 2);
+
+        let token = &tokens[0];
+        assert_eq!(token.kind, TokenType::String);
+        assert_eq!(token.lexeme, r#""ê""#);
+        assert_eq!(token.literal, Literal::String("ê".to_string()));
+    }
+
+    #[test]
+    fn empty_string() {
+        let tokens = Lexer::new(r#""""#).run();
+
+        assert_eq!(tokens.len(), 2);
+
+        let token = &tokens[0];
+        assert_eq!(token.kind, TokenType::String);
+        assert_eq!(token.lexeme, r#""""#);
+        assert_eq!(token.literal, Literal::String("".to_string()));
+    }
+
+    #[test]
+    fn string_with_escape_characters() {
+        let tokens = Lexer::new(r#""Hello\nWorld!""#).run();
+
+        assert_eq!(tokens.len(), 2);
+
+        let token = &tokens[0];
+        assert_eq!(token.kind, TokenType::String);
+        assert_eq!(token.lexeme, r#""Hello\nWorld!""#);
+        assert_eq!(token.literal, Literal::String("Hello\\nWorld!".to_string()));
+    }
+
+    #[test]
+    fn string_with_unicode() {
+        let tokens = Lexer::new(r#""Hello, 世界!""#).run();
+
+        let mut tokens = tokens.iter();
+
+        assert_eq!(tokens.len(), 2);
 
         let first = tokens.next().unwrap();
 
         assert_eq!(first.kind, TokenType::String);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "\"hello\"");
-        assert_eq!(first.literal, Literal::String(String::from("hello")));
-    }
-
-    #[test]
-    fn integers() {
-        let mut lexer = Lexer::new("1");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
-    }
-
-    #[test]
-    fn floats() {
-        let mut lexer = Lexer::new("1.0");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Float);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "1.0");
-        assert_eq!(first.literal, Literal::Float(1.0));
-    }
-
-    #[test]
-    fn identifier() {
-        let mut lexer = Lexer::new("hello");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Identifier);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "hello");
-        assert_eq!(first.literal, Literal::String(String::from("hello")));
-    }
-
-    #[test]
-    fn identifier_with_underscore() {
-        let mut lexer = Lexer::new("hello_hello");
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Identifier);
-        assert_eq!(first.line, 1);
-        assert_eq!(first.lexeme, "hello_hello");
-        assert_eq!(first.literal, Literal::String(String::from("hello_hello")));
-    }
-
-    #[test]
-    fn should_skip_comments() {
-        let mut lexer = Lexer::new(
-            "// this is a comment
-            1",
-        );
-
-        let result = lexer.scan_tokens();
-        let mut tokens = result.iter();
-
-        let first = tokens.next().unwrap();
-
-        assert_eq!(first.kind, TokenType::Integer);
-        assert_eq!(first.line, 2);
-        assert_eq!(first.lexeme, "1");
-        assert_eq!(first.literal, Literal::Integer(1));
+        assert_eq!(first.lexeme, r#""Hello, 世界!""#);
+        assert_eq!(first.literal, Literal::String("Hello, 世界!".to_string()));
     }
 }

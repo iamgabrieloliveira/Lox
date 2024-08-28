@@ -1,10 +1,4 @@
-var i = 0;
+var first_name = "popo";
+var last_name = "kitas";
 
-if (true) {
-	while (true) {
-		i;
-	}
-}
-
-print i;
-print "End";
+print first_name + last_name;

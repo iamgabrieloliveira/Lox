@@ -19,9 +19,9 @@ fn main() {
 
     let source = std::fs::read_to_string(&args.file).expect("Failed to read file");
 
-    let mut lexer = lexer::Lexer::new(&source);
+    let lexer = lexer::Lexer::new(&source);
 
-    let tokens = lexer.scan_tokens();
+    let tokens = lexer.run();
 
     let mut parser = parser::Parser::new(tokens);
 
