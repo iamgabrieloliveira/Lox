@@ -105,6 +105,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.print_statement()
             }
+            TokenType::For => {
+                self.advance();
+                self.for_statement()
+            }
             TokenType::If => {
                 self.advance();
                 self.if_statement()
@@ -482,5 +486,67 @@ impl<'a> Parser<'a> {
 
     fn is_end(&self) -> bool {
         self.peek().kind == TokenType::Eof
+    }
+
+    fn for_statement(&mut self) -> Result<Statement<'a>, ParserError> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.")?;
+
+        let token = self.advance().kind;
+
+        let initializer = match token {
+            // If we match the semicolon,
+            // it means that we don't have a initializer:
+            // e.g: for (;i < 10; i++) {}
+            TokenType::Semicolon => None,
+            TokenType::Var => Some(self.variable_declaration()?),
+            _ => Some(self.expression_statement()?),
+        };
+
+        let token = self.peek().kind;
+
+        let condition = match token {
+            TokenType::Semicolon => None,
+            _ => Some(self.expression()?),
+        };
+
+        self.consume(TokenType::Semicolon, "Expect ')' after loop condition.")?;
+
+        let token = self.peek().kind;
+
+        let increment = match token {
+            TokenType::Semicolon => None,
+            _ => Some(self.expression()?),
+        };
+
+        self.consume(TokenType::RightParen, "Expect ')' after for clauses.")?;
+
+        let mut body = self.statement()?;
+
+        body = match increment {
+            Some(inc) => Statement::Block(vec![body, Statement::Expression(inc)]),
+            None => body,
+        };
+
+        match condition {
+            None => {
+                body = Statement::While {
+                    condition: Expression::Literal(Literal::Boolean(true)),
+                    body: Box::new(body),
+                }
+            }
+            Some(cond) => {
+                body = Statement::While {
+                    condition: cond,
+                    body: Box::new(body),
+                }
+            }
+        };
+
+        body = match initializer {
+            Some(init) => Statement::Block(vec![init, body]),
+            None => body,
+        };
+
+        Ok(body)
     }
 }

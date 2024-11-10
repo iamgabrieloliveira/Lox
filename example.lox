@@ -1,6 +1,8 @@
-var first_name = "gabriel";
+print "Starting loop";
 
-var last_name = "oliveira";
+for (var i = 0; i < 10; i = i + 1) {
+	print i;
+}
 
-print first_name + " " + last_name;
+print "End of loop";
 

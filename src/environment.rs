@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 type Value = Option<Literal>;
 
+#[derive(Debug)]
 pub struct Environment<'a> {
     values: HashMap<&'a str, Value>,
     pub parent: Box<Option<Environment<'a>>>,
@@ -51,7 +52,7 @@ impl<'a> Environment<'a> {
 
         if variable.is_none() {
             variable = match *self.parent {
-                Some(ref parent) => parent.get(name),
+                Some(ref parent) => parent.get_deep(name),
                 None => None,
             };
         }
