@@ -321,7 +321,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn next_char_is(&self, expected: char) -> bool {
-        return self.has_more() && self.peek() != expected;
+        return self.has_more() && self.peek() == expected;
     }
 
     // Used to handle characters with ambiguous meaning.

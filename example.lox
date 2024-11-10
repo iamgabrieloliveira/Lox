@@ -1,4 +1,6 @@
-var first_name = "popo";
-var last_name = "kitas";
+var first_name = "gabriel";
 
-print first_name + last_name;
+var last_name = "oliveira";
+
+print first_name + " " + last_name;
+
