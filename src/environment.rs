@@ -1,11 +1,21 @@
-use crate::ast::Literal;
-use std::collections::HashMap;
+use crate::ast::{Callable, Literal};
+use std::{collections::HashMap, rc::Rc};
 
-type Value = Option<Literal>;
+#[derive(Debug, Clone)]
+pub enum Value<'a> {
+    Literal(Literal),
+    Callable(Rc<dyn Callable<'a> + 'a>),
+}
+
+impl<'a> PartialEq for Value<'a> {
+    fn eq(&self, _other: &Self) -> bool {
+        todo!()
+    }
+}
 
 #[derive(Debug)]
 pub struct Environment<'a> {
-    values: HashMap<&'a str, Value>,
+    values: HashMap<&'a str, Value<'a>>,
     pub parent: Box<Option<Environment<'a>>>,
 }
 
@@ -29,11 +39,11 @@ impl<'a> Environment<'a> {
         self.parent.unwrap()
     }
 
-    pub fn define(&mut self, name: &'a str, value: Option<Literal>) -> Option<Value> {
+    pub fn define(&mut self, name: &'a str, value: Value<'a>) -> Option<Value<'a>> {
         self.values.insert(name, value)
     }
 
-    pub fn define_deep(&mut self, name: &'a str, value: Option<Literal>) -> Option<Value> {
+    pub fn define_deep(&mut self, name: &'a str, value: Value<'a>) -> Option<Value<'a>> {
         match self.define(name, value.clone()) {
             Some(v) => Some(v),
             None => match *self.parent {
@@ -43,11 +53,11 @@ impl<'a> Environment<'a> {
         }
     }
 
-    pub fn get(&self, name: &'a str) -> Option<&Value> {
+    pub fn get(&self, name: &'a str) -> Option<&Value<'a>> {
         self.values.get(&name)
     }
 
-    pub fn get_deep(&self, name: &'a str) -> Option<&Value> {
+    pub fn get_deep(&self, name: &'a str) -> Option<&Value<'a>> {
         let mut variable = self.get(name);
 
         if variable.is_none() {

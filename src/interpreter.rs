@@ -1,10 +1,12 @@
+use std::{rc::Rc, time::SystemTime};
+
 use crate::{
-    ast::{Expression, Literal, Statement},
-    environment::Environment,
+    ast::{Callable, Expression, Function, Literal, Statement},
+    environment::{self, Environment},
     lexer::{Token, TokenType},
 };
 
-type EvaluationResult<'a> = Result<(Literal, Environment<'a>), InterpreterError<'a>>;
+type EvaluationResult<'a> = Result<(environment::Value<'a>, Environment<'a>), InterpreterError<'a>>;
 type StatementResult<'a> = Result<Environment<'a>, InterpreterError<'a>>;
 
 #[derive(Debug, Clone)]
@@ -13,8 +15,42 @@ pub struct InterpreterError<'a> {
     pub message: &'a str,
 }
 
+#[derive(Clone, Debug, PartialEq, Copy)]
+struct Clock;
+
+impl<'a> Callable<'a> for Clock {
+    fn arity(&self) -> usize {
+        return 0;
+    }
+
+    fn call(
+        &self,
+        env: Environment<'a>,
+        _args: Vec<environment::Value>,
+    ) -> crate::ast::CallableReturn<'a> {
+        let time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let val = environment::Value::Literal(Literal::Integer(time as i64));
+
+        return (env, val);
+    }
+}
+
+impl std::fmt::Display for Clock {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<native fn>")
+    }
+}
+
 pub fn run(statements: Vec<Statement>) -> Result<(), InterpreterError> {
     let mut env = Environment::head();
+
+    let clock_fn = Rc::new(Clock);
+
+    env.define("clock", environment::Value::Callable(clock_fn));
 
     for statement in statements {
         match execute(statement, env) {
@@ -41,14 +77,31 @@ fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResul
             otherwise,
         } => execute_if(condition, then, otherwise, env),
         Statement::While { condition, body } => execute_while(condition, body, env),
+        Statement::Break => todo!(),
+        Statement::Function(fn_sttm) => execute_function(fn_sttm, env),
     }
+}
+
+fn execute_function<'a>(
+    sttm: crate::ast::FunctionStatement<'a>,
+    mut env: Environment<'a>,
+) -> StatementResult<'a> {
+    let function = Function {
+        declaration: sttm.clone(),
+    };
+
+    let r#fn = crate::environment::Value::Callable(Rc::new(function));
+
+    env.define(sttm.name.lexeme, r#fn);
+
+    Ok(env)
 }
 
 fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
     match expression {
         Expression::Variable(token) => evaluate_var(token, env),
         Expression::Assign(token, value) => evaluate_assign(token, *value, env),
-        Expression::Literal(v) => Ok((v.clone(), env)),
+        Expression::Literal(v) => Ok((environment::Value::Literal(v), env)),
         Expression::Unary { operator, right } => evaluate_unary(operator, right, env),
         Expression::Grouping(literal) => evaluate(*literal, env),
         Expression::Binary {
@@ -61,14 +114,59 @@ fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationR
             operator,
             right,
         } => evaluate_logical(left, operator, right, env),
+        Expression::Call {
+            callee,
+            paren,
+            arguments,
+        } => evaluate_function(callee, paren, arguments, env),
     }
 }
 
-fn is_truthy(value: &Literal) -> bool {
+fn evaluate_function<'a>(
+    callee: Box<Expression<'a>>,
+    paren: Token<'a>,
+    arguments: Vec<Expression<'a>>,
+    env: Environment<'a>,
+) -> EvaluationResult<'a> {
+    let (callee, mut env) = evaluate(*callee, env)?;
+
+    match callee {
+        environment::Value::Callable(callable) => {
+            let mut args: Vec<environment::Value> = Vec::with_capacity(arguments.len());
+
+            for arg in arguments {
+                let (arg, _env) = evaluate(arg, env)?;
+                env = _env;
+
+                args.push(arg);
+            }
+
+            if args.len() != callable.arity() {
+                // let message = format!(
+                //    "Expected {} arguments but got {}",
+                //    callable.arity(),
+                //    args.len()
+                // );
+
+                return error(paren, "Expected n arguments but got m");
+            }
+
+            let (env, r#return) = callable.call(env, args);
+
+            Ok((r#return, env))
+        }
+        environment::Value::Literal(_) => error(paren, "Can only call functions"),
+    }
+}
+
+fn is_truthy(value: &environment::Value) -> bool {
     match value {
-        Literal::Boolean(v) => *v,
-        Literal::Nil => false,
-        _ => true,
+        environment::Value::Literal(v) => match v {
+            &Literal::Boolean(v) => v,
+            &Literal::Nil => false,
+            _ => true,
+        },
+        environment::Value::Callable(_) => true,
     }
 }
 
@@ -83,15 +181,26 @@ fn evaluate_unary<'a>(
 ) -> EvaluationResult<'a> {
     let (right, env) = evaluate(*right, env)?;
 
-    match operator.kind {
-        TokenType::Bang => Ok((Literal::Boolean(!is_truthy(&right)), env)),
-        TokenType::Minus => match right {
-            Literal::Integer(i) => Ok((Literal::Integer(-i), env)),
-            Literal::Float(f) => Ok((Literal::Float(-f), env)),
-            _ => error(operator, "Operand must be a number"),
+    let literal = match right {
+        environment::Value::Literal(value) => match operator.kind {
+            TokenType::Bang => {
+                let value = environment::Value::Literal(value);
+
+                Ok((Literal::Boolean(!is_truthy(&value)), env))
+            }
+            TokenType::Minus => match value {
+                Literal::Integer(i) => Ok((Literal::Integer(-i), env)),
+                Literal::Float(f) => Ok((Literal::Float(-f), env)),
+                _ => error(operator, "Operand must be a number"),
+            },
+            _ => unreachable!(),
         },
-        _ => unreachable!(),
-    }
+        environment::Value::Callable(_value) => {
+            error(operator, "Cannot apply unary operator to a function")
+        }
+    };
+
+    literal.map(|(v, e)| (environment::Value::Literal(v), e))
 }
 
 fn evaluate_binary<'a>(
@@ -103,72 +212,92 @@ fn evaluate_binary<'a>(
     let (left, env) = evaluate(*left, env)?;
     let (right, env) = evaluate(*right, env)?;
 
-    // TODO: Better error handling
-    let value = match (left, operator.kind, right) {
-        (Literal::Integer(l), TokenType::Plus, Literal::Integer(r)) => Literal::Integer(l + r),
-        (Literal::Float(l), TokenType::Plus, Literal::Float(r)) => Literal::Float(l + r),
+    match (left, right) {
+        (environment::Value::Literal(l), environment::Value::Literal(r)) => {
+            // TODO: Better error handling
+            let value = match (l, operator.kind, r) {
+                (Literal::Integer(l), TokenType::Plus, Literal::Integer(r)) => {
+                    Literal::Integer(l + r)
+                }
+                (Literal::Float(l), TokenType::Plus, Literal::Float(r)) => Literal::Float(l + r),
 
-        (Literal::Integer(l), TokenType::Minus, Literal::Integer(r)) => Literal::Integer(l + r),
-        (Literal::Float(l), TokenType::Minus, Literal::Float(r)) => Literal::Float(l + r),
+                (Literal::Integer(l), TokenType::Minus, Literal::Integer(r)) => {
+                    Literal::Integer(l + r)
+                }
+                (Literal::Float(l), TokenType::Minus, Literal::Float(r)) => Literal::Float(l + r),
 
-        (Literal::Integer(l), TokenType::Star, Literal::Integer(r)) => Literal::Integer(l * r),
-        (Literal::Float(l), TokenType::Star, Literal::Float(r)) => Literal::Float(l * r),
+                (Literal::Integer(l), TokenType::Star, Literal::Integer(r)) => {
+                    Literal::Integer(l * r)
+                }
+                (Literal::Float(l), TokenType::Star, Literal::Float(r)) => Literal::Float(l * r),
 
-        (Literal::Integer(l), TokenType::Slash, Literal::Integer(r)) => Literal::Integer(l / r),
-        (Literal::Float(l), TokenType::Slash, Literal::Float(r)) => Literal::Float(l / r),
+                (Literal::Integer(l), TokenType::Slash, Literal::Integer(r)) => {
+                    Literal::Integer(l / r)
+                }
+                (Literal::Float(l), TokenType::Slash, Literal::Float(r)) => Literal::Float(l / r),
 
-        (Literal::Integer(l), TokenType::Module, Literal::Integer(r)) => Literal::Integer(l % r),
-        (Literal::Float(l), TokenType::Module, Literal::Float(r)) => Literal::Float(l % r),
+                (Literal::Integer(l), TokenType::Module, Literal::Integer(r)) => {
+                    Literal::Integer(l % r)
+                }
+                (Literal::Float(l), TokenType::Module, Literal::Float(r)) => Literal::Float(l % r),
 
-        (Literal::String(l), TokenType::Plus, Literal::String(r)) => {
-            Literal::String(format!("{}{}", l, r))
+                (Literal::String(l), TokenType::Plus, Literal::String(r)) => {
+                    Literal::String(format!("{}{}", l, r))
+                }
+
+                (Literal::Integer(l), TokenType::Greater, Literal::Integer(r)) => {
+                    Literal::Boolean(l > r)
+                }
+                (Literal::Float(l), TokenType::Greater, Literal::Float(r)) => {
+                    Literal::Boolean(l > r)
+                }
+
+                (Literal::Integer(l), TokenType::GreaterEqual, Literal::Integer(r)) => {
+                    Literal::Boolean(l >= r)
+                }
+                (Literal::Float(l), TokenType::GreaterEqual, Literal::Float(r)) => {
+                    Literal::Boolean(l >= r)
+                }
+
+                (Literal::Integer(l), TokenType::Less, Literal::Integer(r)) => {
+                    Literal::Boolean(l < r)
+                }
+                (Literal::Float(l), TokenType::Less, Literal::Float(r)) => Literal::Boolean(l < r),
+
+                (Literal::Integer(l), TokenType::LessEqual, Literal::Integer(r)) => {
+                    Literal::Boolean(l <= r)
+                }
+                (Literal::Float(l), TokenType::LessEqual, Literal::Float(r)) => {
+                    Literal::Boolean(l <= r)
+                }
+
+                (
+                    _,
+                    TokenType::Plus
+                    | TokenType::Minus
+                    | TokenType::Star
+                    | TokenType::Slash
+                    | TokenType::Greater
+                    | TokenType::GreaterEqual
+                    | TokenType::Less
+                    | TokenType::LessEqual,
+                    _,
+                ) => error(operator.clone(), "Operands must numbers")?,
+
+                (l, TokenType::EqualEqual, r) => Literal::Boolean(l == r),
+                (l, TokenType::BangEqual, r) => Literal::Boolean(l != r),
+                _ => unreachable!(),
+            };
+
+            Ok((environment::Value::Literal(value), env))
         }
-
-        (Literal::Integer(l), TokenType::Greater, Literal::Integer(r)) => Literal::Boolean(l > r),
-        (Literal::Float(l), TokenType::Greater, Literal::Float(r)) => Literal::Boolean(l > r),
-
-        (Literal::Integer(l), TokenType::GreaterEqual, Literal::Integer(r)) => {
-            Literal::Boolean(l >= r)
-        }
-        (Literal::Float(l), TokenType::GreaterEqual, Literal::Float(r)) => Literal::Boolean(l >= r),
-
-        (Literal::Integer(l), TokenType::Less, Literal::Integer(r)) => Literal::Boolean(l < r),
-        (Literal::Float(l), TokenType::Less, Literal::Float(r)) => Literal::Boolean(l < r),
-
-        (Literal::Integer(l), TokenType::LessEqual, Literal::Integer(r)) => {
-            Literal::Boolean(l <= r)
-        }
-        (Literal::Float(l), TokenType::LessEqual, Literal::Float(r)) => Literal::Boolean(l <= r),
-
-        (
-            _,
-            TokenType::Plus
-            | TokenType::Minus
-            | TokenType::Star
-            | TokenType::Slash
-            | TokenType::Greater
-            | TokenType::GreaterEqual
-            | TokenType::Less
-            | TokenType::LessEqual,
-            _,
-        ) => error(operator.clone(), "Operands must numbers")?,
-
-        (l, TokenType::EqualEqual, r) => Literal::Boolean(l == r),
-        (l, TokenType::BangEqual, r) => Literal::Boolean(l != r),
-        _ => unreachable!(),
-    };
-
-    Ok((value, env))
+        _ => error(operator, "Operands must be literals"),
+    }
 }
 
 fn evaluate_var<'a>(token: Token<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
     match env.get_deep(token.lexeme) {
-        Some(v) => match v {
-            // TODO:
-            // Check if that clone is removable
-            Some(value) => Ok((value.clone(), env)),
-            None => Ok((Literal::Nil, env)),
-        },
+        Some(v) => Ok((v.clone(), env)),
         None => error(token, "Variable not declared"),
     }
 }
@@ -177,14 +306,11 @@ fn evaluate_assign<'a>(
     token: Token<'a>,
     value: Expression<'a>,
     env: Environment<'a>,
-) -> EvaluationResult<'a> {
+) -> Result<(environment::Value<'a>, Environment<'a>), InterpreterError<'a>> {
     let (value, mut env) = evaluate(value, env)?;
 
-    match env.define_deep(token.lexeme, Some(value)) {
-        Some(v) => match v {
-            Some(value) => Ok((value.clone(), env)),
-            None => Ok((Literal::Nil, env)),
-        },
+    match env.define(token.lexeme, value) {
+        Some(v) => Ok((v, env)),
         None => error(token, "Attempt to assign a variable that does not exist"),
     }
 }
@@ -209,7 +335,7 @@ fn evaluate_logical<'a>(
                 return Ok((right, env));
             }
 
-            return Ok((Literal::Nil, env));
+            return Ok((environment::Value::Literal(Literal::Nil), env));
         }
         TokenType::And => {
             let (left, env) = evaluate(*left, env)?;
@@ -221,10 +347,10 @@ fn evaluate_logical<'a>(
                     return Ok((right, env));
                 }
 
-                return Ok((Literal::Nil, env));
+                return Ok((environment::Value::Literal(Literal::Nil), env));
             }
 
-            return Ok((Literal::Nil, env));
+            return Ok((environment::Value::Literal(Literal::Nil), env));
         }
         _ => unreachable!(),
     }
@@ -237,7 +363,10 @@ fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> S
 fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
     let (value, env) = evaluate(expression, env)?;
 
-    println!("{}", value);
+    match value {
+        environment::Value::Literal(v) => println!("{}", v),
+        environment::Value::Callable(c) => println!("{}", c),
+    }
 
     Ok(env)
 }
@@ -249,21 +378,24 @@ fn execute_var<'a>(
 ) -> Result<Environment<'a>, InterpreterError<'a>> {
     match expression {
         None => {
-            env.define(name.lexeme, None);
+            env.define(name.lexeme, environment::Value::Literal(Literal::Nil));
 
             Ok(env)
         }
         Some(expr) => {
             let (value, mut env) = evaluate(expr, env)?;
 
-            env.define(name.lexeme, Some(value));
+            env.define(name.lexeme, value);
 
             Ok(env)
         }
     }
 }
 
-fn execute_block<'a>(statements: Vec<Statement<'a>>, env: Environment<'a>) -> StatementResult<'a> {
+pub fn execute_block<'a>(
+    statements: Vec<Statement<'a>>,
+    env: Environment<'a>,
+) -> StatementResult<'a> {
     // TODO:
     // Fix Nested Scopes
     // Here we 'borrow' the environment and create a new one with the block as the parent

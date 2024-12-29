@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Expression, Literal, Statement},
+    ast::{Expression, FunctionStatement, Literal, Statement},
     lexer::TokenType,
     lox::Lox,
     Token,
@@ -62,6 +62,10 @@ impl<'a> Parser<'a> {
                     self.advance();
                     self.variable_declaration()
                 }
+                TokenType::Fun => {
+                    self.advance();
+                    self.function_declaration("function")
+                }
                 _ => self.statement(),
             }
         };
@@ -101,6 +105,13 @@ impl<'a> Parser<'a> {
         let token = self.peek();
 
         match token.kind {
+            TokenType::Break => {
+                self.advance();
+
+                self.consume(TokenType::Semicolon, "Expect ';' after break.")?;
+
+                Ok(Statement::Break)
+            }
             TokenType::Print => {
                 self.advance();
                 self.print_statement()
@@ -167,7 +178,7 @@ impl<'a> Parser<'a> {
     fn block(&mut self) -> ParserResult<Statement<'a>> {
         let mut statements = Vec::new();
 
-        while self.peek().kind != TokenType::RightBrace {
+        while self.peek().kind != TokenType::RightBrace && !self.is_end() {
             statements.push(self.declaration()?);
         }
 
@@ -331,7 +342,7 @@ impl<'a> Parser<'a> {
 
     fn unary(&mut self) -> ParserResult<Expression<'a>> {
         if !is_unary(self.peek().kind) {
-            return self.primary();
+            return self.call();
         }
 
         self.advance();
@@ -343,6 +354,47 @@ impl<'a> Parser<'a> {
             operator,
             right: Box::new(right),
         })
+    }
+
+    fn call(&mut self) -> ParserResult<Expression<'a>> {
+        let mut expr = self.primary()?;
+
+        loop {
+            let token = self.peek().kind;
+
+            if token == TokenType::LeftParen {
+                self.advance();
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expression<'a>) -> ParserResult<Expression<'a>> {
+        let mut args: Vec<Expression> = Vec::new();
+
+        if self.peek().kind != TokenType::RightParen {
+            loop {
+                args.push(self.expression()?);
+
+                if self.peek().kind != TokenType::Comma {
+                    break;
+                } else {
+                    self.advance();
+                }
+            }
+        }
+
+        let paren = self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
+
+        return Ok(Expression::Call {
+            callee: Box::new(callee),
+            paren: paren.clone(),
+            arguments: args,
+        });
     }
 
     fn primary(&mut self) -> ParserResult<Expression<'a>> {
@@ -548,5 +600,68 @@ impl<'a> Parser<'a> {
         };
 
         Ok(body)
+    }
+
+    fn function_declaration(&mut self, kind: &str) -> Result<Statement<'a>, ParserError> {
+        let name = self
+            .consume(
+                TokenType::Identifier,
+                format!("Expected {} name.", kind).as_str(),
+            )?
+            .clone();
+
+        self.consume(
+            TokenType::LeftParen,
+            format!("Expected '(' after {} name.", kind).as_str(),
+        )?;
+
+        let token = self.peek().kind;
+
+        let mut params: Vec<Token> = Vec::with_capacity(255);
+
+        // if it's not a right paren it means that we should have arguments in that function
+        if token != TokenType::RightParen {
+            loop {
+                if params.len() >= 255 {
+                    Self::error(
+                        self.peek().clone(),
+                        "Cannot have more than 255 parameters.".to_string(),
+                    )?;
+                }
+
+                let param = self.consume(TokenType::Identifier, "Expected parameter name.")?;
+
+                params.push(param.clone());
+
+                let token = self.peek().kind;
+
+                if token != TokenType::Comma {
+                    break;
+                }
+
+                self.advance();
+            }
+        }
+
+        self.consume(TokenType::RightParen, "Expected ')' after parameters.")?;
+        self.consume(
+            TokenType::LeftBrace,
+            format!("Expected '{{' before {} body.", kind).as_str(),
+        )?;
+
+        let body = self.block()?;
+
+        match body {
+            Statement::Block(sttms) => {
+                let r#fn = Statement::Function(FunctionStatement {
+                    name,
+                    params,
+                    body: sttms,
+                });
+
+                Ok(r#fn)
+            }
+            _ => unreachable!(),
+        }
     }
 }
