@@ -6,8 +6,14 @@ use crate::{
     lexer::{Token, TokenType},
 };
 
+use crate::environment as env;
+
+pub enum StatementResult<'a> {
+    Normal(Result<Environment<'a>, InterpreterError<'a>>),
+    Returning(Result<(Environment<'a>, Option<Expression<'a>>), InterpreterError<'a>>),
+}
+
 type EvaluationResult<'a> = Result<(environment::Value<'a>, Environment<'a>), InterpreterError<'a>>;
-type StatementResult<'a> = Result<Environment<'a>, InterpreterError<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct InterpreterError<'a> {
@@ -15,49 +21,24 @@ pub struct InterpreterError<'a> {
     pub message: &'a str,
 }
 
-#[derive(Clone, Debug, PartialEq, Copy)]
-struct Clock;
-
-impl<'a> Callable<'a> for Clock {
-    fn arity(&self) -> usize {
-        return 0;
-    }
-
-    fn call(
-        &self,
-        env: Environment<'a>,
-        _args: Vec<environment::Value>,
-    ) -> crate::ast::CallableReturn<'a> {
-        let time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        let val = environment::Value::Literal(Literal::Integer(time as i64));
-
-        return (env, val);
-    }
-}
-
-impl std::fmt::Display for Clock {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "<native fn>")
-    }
-}
-
 pub fn run(statements: Vec<Statement>) -> Result<(), InterpreterError> {
     let mut env = Environment::head();
 
     let clock_fn = Rc::new(Clock);
 
-    env.define("clock", environment::Value::Callable(clock_fn));
+    env.define("clock", env::Value::Callable(clock_fn));
 
     for statement in statements {
         match execute(statement, env) {
-            Ok(e) => env = e,
-            Err(e) => {
-                eprintln!("Error: {:?}", e);
-                return Err(e);
+            StatementResult::Normal(r) => match r {
+                Ok(e) => env = e,
+                Err(e) => {
+                    eprintln!("Error: {:?}", e);
+                    return Err(e);
+                }
+            },
+            StatementResult::Returning(_) => {
+                panic!("You can only use 'return' keyword inside a block")
             }
         }
     }
@@ -79,6 +60,7 @@ fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResul
         Statement::While { condition, body } => execute_while(condition, body, env),
         Statement::Break => todo!(),
         Statement::Function(fn_sttm) => execute_function(fn_sttm, env),
+        Statement::Return((_keyword, value)) => StatementResult::Returned((Ok(env), value)),
     }
 }
 
@@ -94,10 +76,10 @@ fn execute_function<'a>(
 
     env.define(sttm.name.lexeme, r#fn);
 
-    Ok(env)
+    StatementResult::Normal(Ok(env))
 }
 
-fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+pub fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
     match expression {
         Expression::Variable(token) => evaluate_var(token, env),
         Expression::Assign(token, value) => evaluate_assign(token, *value, env),
@@ -357,37 +339,44 @@ fn evaluate_logical<'a>(
 }
 
 fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    evaluate(expression, env).map(|(_, env)| env)
+    let value = evaluate(expression, env).map(|(_, env)| env);
+    StatementResult::Normal(value)
 }
 
 fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    let (value, env) = evaluate(expression, env)?;
+    match evaluate(expression, env) {
+        Ok((value, env)) => {
+            match value {
+                environment::Value::Literal(v) => println!("{}", v),
+                environment::Value::Callable(c) => println!("{}", c),
+            }
 
-    match value {
-        environment::Value::Literal(v) => println!("{}", v),
-        environment::Value::Callable(c) => println!("{}", c),
+            StatementResult::Normal(Ok(env))
+        }
+        Err(e) => StatementResult::Normal(Err(e)),
     }
-
-    Ok(env)
 }
 
 fn execute_var<'a>(
     name: Token<'a>,
     expression: Option<Expression<'a>>,
     mut env: Environment<'a>,
-) -> Result<Environment<'a>, InterpreterError<'a>> {
+) -> StatementResult<'a> {
     match expression {
         None => {
             env.define(name.lexeme, environment::Value::Literal(Literal::Nil));
 
-            Ok(env)
+            StatementResult::Normal(Ok(env))
         }
         Some(expr) => {
-            let (value, mut env) = evaluate(expr, env)?;
+            let (value, mut env) = match evaluate(expr, env) {
+                Ok((v, e)) => (v, e),
+                Err(e) => return StatementResult::Normal(Err(e)),
+            };
 
             env.define(name.lexeme, value);
 
-            Ok(env)
+            StatementResult::Normal(Ok(env))
         }
     }
 }
@@ -404,10 +393,18 @@ pub fn execute_block<'a>(
     let mut block_env = Environment::block(env);
 
     for statement in statements {
-        block_env = execute(statement, block_env)?;
+        block_env = match execute(statement, block_env) {
+            StatementResult::Normal(n) => match n {
+                Ok(e) => e,
+                Err(e) => return StatementResult::Normal(Err(e)),
+            },
+            StatementResult::Returned(r) => {
+                return StatementResult::Returned(r);
+            }
+        };
     }
 
-    Ok(block_env.get_parent())
+    StatementResult::Normal(Ok(block_env.get_parent()))
 }
 
 fn execute_if<'a>(
@@ -416,15 +413,30 @@ fn execute_if<'a>(
     otherwise: Box<Option<Statement<'a>>>,
     env: Environment<'a>,
 ) -> StatementResult<'a> {
-    let (value, mut env) = evaluate(condition, env)?;
+    let (value, mut env) = match evaluate(condition, env) {
+        Ok((v, e)) => (v, e),
+        Err(e) => return StatementResult::Normal(Err(e)),
+    };
 
     if is_truthy(&value) {
-        env = execute(*then, env)?;
+        env = match execute(*then, env) {
+            StatementResult::Normal(n) => match n {
+                Ok(e) => e,
+                Err(e) => return StatementResult::Normal(Err(e)),
+            },
+            StatementResult::Returned(r) => return StatementResult::Returned(r),
+        };
     } else if let Some(e) = *otherwise {
-        env = execute(e, env)?;
+        env = match execute(e, env) {
+            StatementResult::Normal(n) => match n {
+                Ok(e) => e,
+                Err(e) => return StatementResult::Normal(Err(e)),
+            },
+            StatementResult::Returned(r) => return StatementResult::Returned(r),
+        }
     }
 
-    Ok(env)
+    StatementResult::Normal(Ok(env))
 }
 
 fn execute_while<'a>(
@@ -433,16 +445,25 @@ fn execute_while<'a>(
     mut env: Environment<'a>,
 ) -> StatementResult<'a> {
     loop {
-        let (val, env_) = evaluate(condition.clone(), env)?;
+        let (value, env_) = match evaluate(condition.clone(), env) {
+            Ok((v, e)) => (v, e),
+            Err(e) => return StatementResult::Normal(Err(e)),
+        };
 
         env = env_;
 
-        if !is_truthy(&val) {
+        if !is_truthy(&value) {
             break;
         }
 
-        env = execute(*body.clone(), env)?;
+        env = match execute(*body.clone(), env) {
+            StatementResult::Normal(n) => match n {
+                Ok(e) => e,
+                Err(e) => return StatementResult::Normal(Err(e)),
+            },
+            StatementResult::Returned(r) => return StatementResult::Returned(r),
+        }
     }
 
-    Ok(env)
+    StatementResult::Normal(Ok(env))
 }

@@ -1,21 +1,8 @@
-fun hello() {
-	print "hello";
+fun fib(n) {
+  if (n <= 1) return n;
+  return fib(n - 2) + fib(n - 1);
 }
 
-hello();
-
-print hello;
-
-fun sum(a, b) {
-	print a + b;
+for (var i = 0; i < 20; i = i + 1) {
+  print fib(i);
 }
-
-sum(1, 10);
-
-fun say_hello(first_name, last_name) {
-	print "Hello, " + first_name + " " + last_name;
-}
-
-say_hello("Gabriel", "Oliveira");
-
-

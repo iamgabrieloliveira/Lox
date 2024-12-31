@@ -1,9 +1,11 @@
 mod ast;
 mod environment;
+mod functions;
 mod interpreter;
 mod lexer;
 mod lox;
 mod parser;
+mod types;
 
 use clap::Parser as ArgsParser;
 use lexer::Token;

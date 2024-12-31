@@ -43,6 +43,7 @@ impl<'a> Environment<'a> {
         self.values.insert(name, value)
     }
 
+    #[allow(unused)]
     pub fn define_deep(&mut self, name: &'a str, value: Value<'a>) -> Option<Value<'a>> {
         match self.define(name, value.clone()) {
             Some(v) => Some(v),

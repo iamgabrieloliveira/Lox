@@ -1,0 +1,26 @@
+NOTE: any tool to document it?
+
+program -> declaration* EOF ;
+block -> "{" declaration "}"
+declaration → fn_declaration | variable_declaration | statement;
+fn_declaration  -> "fn" IDENTIFIER "(" parameters? ")" block ;
+fn_declaration  -> "fn" IDENTIFIER "(" parameters? ")" block ;
+parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
+variable_declaration -> "var" IDENTIFIER ( "=" expression )? ";" ;
+statement -> expr_statement | if_statement | print_statement |  while_statement | block;
+returnSttm -> "return" expression? ";" ;
+if_statement = "if" "(" condition ")" statement ( "else" statement )?
+expr_statement -> expression ";" ;
+while_statement -> "while" "(" expression ")" statement ;
+print_statment -> "print" expression ";" ;
+expression -> assignment ;
+assignment -> IDENTIFIER "=" assignement | logical_or ;
+logical_or -> logical_and ( "or" logical_and )* ;
+logical_and -> equality ( "and" equality ;
+expression -> literal | unary | binary | grouping ;
+literal -> NUMBER | STRING | "true" | "false" | "nil" ;
+ grouping -> "(" expression ")" ;
+unary -> ( "-" | "!" ) expression ;
+binary -> expression operator expression ;
+perator -> "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" ;
+primary -> "true" | "false" | "nil" | NUMBER | STRING | "(" expression ")" | IDENTIFIER;
