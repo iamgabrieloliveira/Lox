@@ -1,4 +1,4 @@
-use crate::ast::{Callable, Literal};
+use crate::{types::callable::Callable, types::expression::Literal};
 use std::{collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone)]

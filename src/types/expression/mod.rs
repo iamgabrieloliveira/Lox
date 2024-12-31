@@ -7,11 +7,9 @@ pub mod logical;
 pub mod unary;
 pub mod variable;
 
-use grouping::Grouping;
-use variable::Variable;
-
 pub use crate::types::expression::{
-    assign::Assign, binary::Binary, call::Call, literal::Literal, logical::Logical, unary::Unary,
+    assign::Assign, binary::Binary, call::Call, grouping::Grouping, literal::Literal,
+    logical::Logical, unary::Unary, variable::Variable,
 };
 
 #[derive(Clone, Debug, PartialEq)]
