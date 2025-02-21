@@ -1,4 +1,3 @@
-mod ast;
 mod environment;
 mod functions;
 mod interpreter;

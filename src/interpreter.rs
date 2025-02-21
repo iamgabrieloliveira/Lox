@@ -1,19 +1,19 @@
-use std::{rc::Rc, time::SystemTime};
+use std::rc::Rc;
 
-use crate::{
-    ast::{Callable, Expression, Function, Literal, Statement},
-    environment::{self, Environment},
-    lexer::{Token, TokenType},
-};
+use crate::environment::{Environment, Value};
+use crate::lexer::{Token, TokenType};
+use crate::types::expression::Literal;
+use crate::types::{expression, statement, Expression};
+use crate::{functions, types::Statement};
 
-use crate::environment as env;
-
-pub enum StatementResult<'a> {
-    Normal(Result<Environment<'a>, InterpreterError<'a>>),
-    Returning(Result<(Environment<'a>, Option<Expression<'a>>), InterpreterError<'a>>),
+pub enum StatementEffect<'a> {
+    Standard(Environment<'a>),
+    Return((Environment<'a>, Option<Expression<'a>>)),
 }
 
-type EvaluationResult<'a> = Result<(environment::Value<'a>, Environment<'a>), InterpreterError<'a>>;
+type StatementResult<'a> = Result<StatementEffect<'a>, InterpreterError<'a>>;
+
+type EvaluationResult<'a> = Result<(Value<'a>, Environment<'a>), InterpreterError<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct InterpreterError<'a> {
@@ -24,20 +24,12 @@ pub struct InterpreterError<'a> {
 pub fn run(statements: Vec<Statement>) -> Result<(), InterpreterError> {
     let mut env = Environment::head();
 
-    let clock_fn = Rc::new(Clock);
-
-    env.define("clock", env::Value::Callable(clock_fn));
+    functions::define_all(&mut env);
 
     for statement in statements {
-        match execute(statement, env) {
-            StatementResult::Normal(r) => match r {
-                Ok(e) => env = e,
-                Err(e) => {
-                    eprintln!("Error: {:?}", e);
-                    return Err(e);
-                }
-            },
-            StatementResult::Returning(_) => {
+        match execute(statement, env)? {
+            StatementEffect::Standard(e) => env = e,
+            StatementEffect::Return(_) => {
                 panic!("You can only use 'return' keyword inside a block")
             }
         }
@@ -50,74 +42,62 @@ fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResul
     match statement {
         Statement::Expression(expr) => execute_expression(expr, env),
         Statement::Print(expr) => execute_print(expr, env),
-        Statement::Var { name, expression } => execute_var(name, expression, env),
-        Statement::Block(statements) => execute_block(statements, env),
-        Statement::If {
-            condition,
-            then,
-            otherwise,
-        } => execute_if(condition, then, otherwise, env),
-        Statement::While { condition, body } => execute_while(condition, body, env),
-        Statement::Break => todo!(),
-        Statement::Function(fn_sttm) => execute_function(fn_sttm, env),
-        Statement::Return((_keyword, value)) => StatementResult::Returned((Ok(env), value)),
+        Statement::Var(var) => execute_var(var, env),
+        Statement::Block(block) => execute_block(block, env),
+        Statement::If(r#if) => execute_if(r#if, env),
+        Statement::While(r#while) => execute_while(r#while, env),
+        // Statement::Break => todo!(),
+        Statement::Function(function) => execute_function(function, env),
+        Statement::Return(r#return) => {
+            let effect = StatementEffect::Return((env, r#return.value));
+
+            Ok(effect)
+        }
     }
 }
 
 fn execute_function<'a>(
-    sttm: crate::ast::FunctionStatement<'a>,
+    function: statement::Function<'a>,
     mut env: Environment<'a>,
 ) -> StatementResult<'a> {
-    let function = Function {
-        declaration: sttm.clone(),
+    let name = function.name.lexeme.clone();
+
+    let callable_function = crate::types::callable::Function {
+        declaration: function,
     };
 
-    let r#fn = crate::environment::Value::Callable(Rc::new(function));
+    let callable_function = Value::Callable(Rc::new(callable_function));
 
-    env.define(sttm.name.lexeme, r#fn);
+    env.define(name, callable_function);
 
-    StatementResult::Normal(Ok(env))
+    Ok(StatementEffect::Standard(env))
 }
 
 pub fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
     match expression {
-        Expression::Variable(token) => evaluate_var(token, env),
-        Expression::Assign(token, value) => evaluate_assign(token, *value, env),
-        Expression::Literal(v) => Ok((environment::Value::Literal(v), env)),
-        Expression::Unary { operator, right } => evaluate_unary(operator, right, env),
-        Expression::Grouping(literal) => evaluate(*literal, env),
-        Expression::Binary {
-            left,
-            operator,
-            right,
-        } => evaluate_binary(left, operator, right, env),
-        Expression::Logical {
-            left,
-            operator,
-            right,
-        } => evaluate_logical(left, operator, right, env),
-        Expression::Call {
-            callee,
-            paren,
-            arguments,
-        } => evaluate_function(callee, paren, arguments, env),
+        Expression::Variable(var) => evaluate_var(var, env),
+        Expression::Assign(assign) => evaluate_assign(assign, env),
+        Expression::Literal(literal) => Ok((Value::Literal(literal), env)),
+        Expression::Unary(unary) => evaluate_unary(unary, env),
+        Expression::Grouping(grouping) => evaluate(*grouping.value, env),
+        Expression::Binary(binary) => evaluate_binary(binary, env),
+        Expression::Logical(logical) => evaluate_logical(logical, env),
+        Expression::Call(call) => evaluate_function(call, env),
     }
 }
 
-fn evaluate_function<'a>(
-    callee: Box<Expression<'a>>,
-    paren: Token<'a>,
-    arguments: Vec<Expression<'a>>,
-    env: Environment<'a>,
-) -> EvaluationResult<'a> {
-    let (callee, mut env) = evaluate(*callee, env)?;
+fn evaluate_function<'a>(call: expression::Call<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+    let (callee, mut env) = evaluate(*call.callee, env)?;
 
     match callee {
-        environment::Value::Callable(callable) => {
-            let mut args: Vec<environment::Value> = Vec::with_capacity(arguments.len());
+        Value::Literal(_) => panic!("You can only call functions"),
+        Value::Callable(callable) => {
+            let mut args: Vec<Value> = Vec::with_capacity(call.arguments.len());
 
-            for arg in arguments {
+            for arg in call.arguments {
                 let (arg, _env) = evaluate(arg, env)?;
+
+                // todo: it don't seems right :|
                 env = _env;
 
                 args.push(arg);
@@ -130,25 +110,25 @@ fn evaluate_function<'a>(
                 //    args.len()
                 // );
 
-                return error(paren, "Expected n arguments but got m");
+                // todo: I need a token for error handling
+                // return error(call.paren, "Expected n arguments but got m");
             }
 
-            let (env, r#return) = callable.call(env, args);
+            let (env, r#return) = callable.call(env, args)?;
 
             Ok((r#return, env))
         }
-        environment::Value::Literal(_) => error(paren, "Can only call functions"),
     }
 }
 
-fn is_truthy(value: &environment::Value) -> bool {
+fn is_truthy(value: &Value) -> bool {
     match value {
-        environment::Value::Literal(v) => match v {
+        Value::Literal(v) => match v {
             &Literal::Boolean(v) => v,
             &Literal::Nil => false,
             _ => true,
         },
-        environment::Value::Callable(_) => true,
+        Value::Callable(_) => true,
     }
 }
 
@@ -156,48 +136,40 @@ fn error<'a, T>(token: Token<'a>, message: &'a str) -> Result<T, InterpreterErro
     Err(InterpreterError { token, message })
 }
 
-fn evaluate_unary<'a>(
-    operator: Token<'a>,
-    right: Box<Expression<'a>>,
-    env: Environment<'a>,
-) -> EvaluationResult<'a> {
-    let (right, env) = evaluate(*right, env)?;
+fn evaluate_unary<'a>(unary: expression::Unary<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+    let (right, env) = evaluate(*unary.right, env)?;
 
     let literal = match right {
-        environment::Value::Literal(value) => match operator.kind {
+        Value::Literal(value) => match unary.operator.kind {
             TokenType::Bang => {
-                let value = environment::Value::Literal(value);
+                let value = Value::Literal(value);
 
                 Ok((Literal::Boolean(!is_truthy(&value)), env))
             }
             TokenType::Minus => match value {
                 Literal::Integer(i) => Ok((Literal::Integer(-i), env)),
                 Literal::Float(f) => Ok((Literal::Float(-f), env)),
-                _ => error(operator, "Operand must be a number"),
+                _ => error(unary.operator, "Operand must be a number"),
             },
             _ => unreachable!(),
         },
-        environment::Value::Callable(_value) => {
-            error(operator, "Cannot apply unary operator to a function")
-        }
+        Value::Callable(_) => error(unary.operator, "Cannot apply unary operator to a function"),
     };
 
-    literal.map(|(v, e)| (environment::Value::Literal(v), e))
+    literal.map(|(v, e)| (Value::Literal(v), e))
 }
 
 fn evaluate_binary<'a>(
-    left: Box<Expression<'a>>,
-    operator: Token<'a>,
-    right: Box<Expression<'a>>,
+    binary: expression::Binary<'a>,
     env: Environment<'a>,
 ) -> EvaluationResult<'a> {
-    let (left, env) = evaluate(*left, env)?;
-    let (right, env) = evaluate(*right, env)?;
+    let (left, env) = evaluate(*binary.left, env)?;
+    let (right, env) = evaluate(*binary.right, env)?;
 
     match (left, right) {
-        (environment::Value::Literal(l), environment::Value::Literal(r)) => {
-            // TODO: Better error handling
-            let value = match (l, operator.kind, r) {
+        (Value::Literal(l), Value::Literal(r)) => {
+            // TODO: best error handling
+            let value = match (l, binary.operator.kind, r) {
                 (Literal::Integer(l), TokenType::Plus, Literal::Integer(r)) => {
                     Literal::Integer(l + r)
                 }
@@ -264,127 +236,113 @@ fn evaluate_binary<'a>(
                     | TokenType::Less
                     | TokenType::LessEqual,
                     _,
-                ) => error(operator.clone(), "Operands must numbers")?,
+                ) => error(binary.operator.clone(), "Operands must numbers")?,
 
                 (l, TokenType::EqualEqual, r) => Literal::Boolean(l == r),
                 (l, TokenType::BangEqual, r) => Literal::Boolean(l != r),
                 _ => unreachable!(),
             };
 
-            Ok((environment::Value::Literal(value), env))
+            Ok((Value::Literal(value), env))
         }
-        _ => error(operator, "Operands must be literals"),
+        _ => error(binary.operator, "Operands must be literals"),
     }
 }
 
-fn evaluate_var<'a>(token: Token<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
-    match env.get_deep(token.lexeme) {
+fn evaluate_var<'a>(var: expression::Variable<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
+    match env.get_deep(var.value.lexeme) {
         Some(v) => Ok((v.clone(), env)),
-        None => error(token, "Variable not declared"),
+        None => error(var.value, "Variable not declared"),
     }
 }
 
 fn evaluate_assign<'a>(
-    token: Token<'a>,
-    value: Expression<'a>,
+    assign: expression::Assign<'a>,
     env: Environment<'a>,
-) -> Result<(environment::Value<'a>, Environment<'a>), InterpreterError<'a>> {
-    let (value, mut env) = evaluate(value, env)?;
+) -> EvaluationResult<'a> {
+    let (value, mut env) = evaluate(*assign.value, env)?;
 
-    match env.define(token.lexeme, value) {
+    match env.define(assign.name.lexeme, value) {
         Some(v) => Ok((v, env)),
-        None => error(token, "Attempt to assign a variable that does not exist"),
+        None => error(
+            assign.name,
+            "Attempt to assign a variable that does not exist",
+        ),
     }
 }
 
 fn evaluate_logical<'a>(
-    left: Box<Expression<'a>>,
-    operator: Token<'a>,
-    right: Box<Expression<'a>>,
+    logical: expression::Logical<'a>,
     env: Environment<'a>,
 ) -> EvaluationResult<'a> {
-    match operator.kind {
+    match logical.operator.kind {
         TokenType::Or => {
-            let (left, env) = evaluate(*left, env)?;
+            let (left, env) = evaluate(*logical.left, env)?;
 
             if is_truthy(&left) {
                 return Ok((left, env));
             }
 
-            let (right, env) = evaluate(*right, env)?;
+            let (right, env) = evaluate(*logical.right, env)?;
 
             if is_truthy(&right) {
                 return Ok((right, env));
             }
 
-            return Ok((environment::Value::Literal(Literal::Nil), env));
+            return Ok((Value::Literal(Literal::Nil), env));
         }
         TokenType::And => {
-            let (left, env) = evaluate(*left, env)?;
+            let (left, env) = evaluate(*logical.left, env)?;
 
             if is_truthy(&left) {
-                let (right, env) = evaluate(*right, env)?;
+                let (right, env) = evaluate(*logical.right, env)?;
 
                 if is_truthy(&right) {
                     return Ok((right, env));
                 }
 
-                return Ok((environment::Value::Literal(Literal::Nil), env));
+                return Ok((Value::Literal(Literal::Nil), env));
             }
 
-            return Ok((environment::Value::Literal(Literal::Nil), env));
+            return Ok((Value::Literal(Literal::Nil), env));
         }
         _ => unreachable!(),
     }
 }
 
 fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    let value = evaluate(expression, env).map(|(_, env)| env);
-    StatementResult::Normal(value)
+    evaluate(expression, env).map(|(_, env)| StatementEffect::Standard(env))
 }
 
-fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    match evaluate(expression, env) {
-        Ok((value, env)) => {
-            match value {
-                environment::Value::Literal(v) => println!("{}", v),
-                environment::Value::Callable(c) => println!("{}", c),
-            }
+fn execute_print<'a>(print: statement::Print<'a>, env: Environment<'a>) -> StatementResult<'a> {
+    evaluate(print.value, env).map(|(value, env)| {
+        match value {
+            Value::Literal(v) => println!("{}", v),
+            Value::Callable(c) => println!("{}", c),
+        };
 
-            StatementResult::Normal(Ok(env))
-        }
-        Err(e) => StatementResult::Normal(Err(e)),
-    }
+        StatementEffect::Standard(env)
+    })
 }
 
-fn execute_var<'a>(
-    name: Token<'a>,
-    expression: Option<Expression<'a>>,
-    mut env: Environment<'a>,
-) -> StatementResult<'a> {
-    match expression {
+fn execute_var<'a>(var: statement::Var<'a>, mut env: Environment<'a>) -> StatementResult<'a> {
+    match var.value {
         None => {
-            env.define(name.lexeme, environment::Value::Literal(Literal::Nil));
+            env.define(var.name.lexeme, Value::Literal(Literal::Nil));
 
-            StatementResult::Normal(Ok(env))
+            Ok(StatementEffect::Standard(env))
         }
         Some(expr) => {
-            let (value, mut env) = match evaluate(expr, env) {
-                Ok((v, e)) => (v, e),
-                Err(e) => return StatementResult::Normal(Err(e)),
-            };
+            let (value, mut env) = evaluate(expr, env)?;
 
-            env.define(name.lexeme, value);
+            env.define(var.name.lexeme, value);
 
-            StatementResult::Normal(Ok(env))
+            Ok(StatementEffect::Standard(env))
         }
     }
 }
 
-pub fn execute_block<'a>(
-    statements: Vec<Statement<'a>>,
-    env: Environment<'a>,
-) -> StatementResult<'a> {
+pub fn execute_block<'a>(block: statement::Block<'a>, env: Environment<'a>) -> StatementResult<'a> {
     // TODO:
     // Fix Nested Scopes
     // Here we 'borrow' the environment and create a new one with the block as the parent
@@ -392,63 +350,47 @@ pub fn execute_block<'a>(
     // we return the parent environment and the block is dropped
     let mut block_env = Environment::block(env);
 
-    for statement in statements {
-        block_env = match execute(statement, block_env) {
-            StatementResult::Normal(n) => match n {
-                Ok(e) => e,
-                Err(e) => return StatementResult::Normal(Err(e)),
-            },
-            StatementResult::Returned(r) => {
-                return StatementResult::Returned(r);
-            }
+    for statement in block.statements {
+        let result = execute(statement, block_env)?;
+
+        block_env = match result {
+            StatementEffect::Standard(env) => env,
+            StatementEffect::Return(_) => return Ok(result),
         };
     }
 
-    StatementResult::Normal(Ok(block_env.get_parent()))
+    Ok(StatementEffect::Standard(block_env.get_parent()))
 }
 
-fn execute_if<'a>(
-    condition: Expression<'a>,
-    then: Box<Statement<'a>>,
-    otherwise: Box<Option<Statement<'a>>>,
-    env: Environment<'a>,
-) -> StatementResult<'a> {
-    let (value, mut env) = match evaluate(condition, env) {
-        Ok((v, e)) => (v, e),
-        Err(e) => return StatementResult::Normal(Err(e)),
+fn ensure_is_standard_effect<'a>(effect: StatementEffect<'a>) -> Environment<'a> {
+    return match effect {
+        StatementEffect::Standard(env) => env,
+        _ => unreachable!(
+            "I don't like these unreachable, need to think a better way of return statements"
+        ),
     };
+}
+
+fn execute_if<'a>(r#if: statement::If<'a>, env: Environment<'a>) -> StatementResult<'a> {
+    let (value, mut env) = evaluate(r#if.condition, env)?;
 
     if is_truthy(&value) {
-        env = match execute(*then, env) {
-            StatementResult::Normal(n) => match n {
-                Ok(e) => e,
-                Err(e) => return StatementResult::Normal(Err(e)),
-            },
-            StatementResult::Returned(r) => return StatementResult::Returned(r),
-        };
-    } else if let Some(e) = *otherwise {
-        env = match execute(e, env) {
-            StatementResult::Normal(n) => match n {
-                Ok(e) => e,
-                Err(e) => return StatementResult::Normal(Err(e)),
-            },
-            StatementResult::Returned(r) => return StatementResult::Returned(r),
-        }
+        let effect = execute(*r#if.then, env)?;
+        env = ensure_is_standard_effect(effect);
+    } else if let Some(o) = *r#if.otherwise {
+        let effect = execute(o, env)?;
+        env = ensure_is_standard_effect(effect);
     }
 
-    StatementResult::Normal(Ok(env))
+    Ok(StatementEffect::Standard(env))
 }
 
 fn execute_while<'a>(
-    condition: Expression<'a>,
-    body: Box<Statement<'a>>,
+    r#while: statement::While<'a>,
     mut env: Environment<'a>,
 ) -> StatementResult<'a> {
     loop {
-        let (value, env_) = match evaluate(condition.clone(), env) {
-            Ok((v, e)) => (v, e),
-            Err(e) => return StatementResult::Normal(Err(e)),
-        };
+        let (value, env_) = evaluate(*r#while.condition.clone(), env)?;
 
         env = env_;
 
@@ -456,14 +398,11 @@ fn execute_while<'a>(
             break;
         }
 
-        env = match execute(*body.clone(), env) {
-            StatementResult::Normal(n) => match n {
-                Ok(e) => e,
-                Err(e) => return StatementResult::Normal(Err(e)),
-            },
-            StatementResult::Returned(r) => return StatementResult::Returned(r),
-        }
+        let block = Statement::Block(r#while.body.clone());
+
+        let effect = execute(block, env)?;
+        env = ensure_is_standard_effect(effect);
     }
 
-    StatementResult::Normal(Ok(env))
+    Ok(StatementEffect::Standard(env))
 }
