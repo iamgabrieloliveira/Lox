@@ -1,10 +1,6 @@
-use crate::{
-    ast::{Expression, FunctionStatement, Literal, Statement},
-    lexer::TokenType,
-    lox::Lox,
-    Token,
-};
-
+use crate::types::expression::Literal;
+use crate::types::{expression, statement, Expression};
+use crate::{lexer::TokenType, lox::Lox, types::Statement, Token};
 pub type ParserResult<T> = std::result::Result<T, ParserError>;
 
 #[derive(Debug, Clone)]
@@ -95,10 +91,10 @@ impl<'a> Parser<'a> {
             "Expect ';' after variable declaration.",
         )?;
 
-        Ok(Statement::Var {
+        Ok(Statement::Var(statement::Var {
             name: token,
-            expression,
-        })
+            value: expression,
+        }))
     }
 
     fn statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -110,7 +106,7 @@ impl<'a> Parser<'a> {
 
                 self.consume(TokenType::Semicolon, "Expect ';' after break.")?;
 
-                Ok(Statement::Break)
+                todo!();
             }
             TokenType::Print => {
                 self.advance();
@@ -132,8 +128,24 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.block()
             }
+            TokenType::Return => {
+                self.advance();
+                self.return_statement()
+            }
             _ => self.expression_statement(),
         }
+    }
+
+    fn return_statement(&mut self) -> ParserResult<Statement<'a>> {
+        if self.peek().kind == TokenType::Semicolon {
+            return Ok(Statement::Return(statement::Return { value: None }));
+        }
+
+        let expr = self.expression()?;
+
+        self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+
+        Ok(Statement::Return(statement::Return { value: Some(expr) }))
     }
 
     fn parse_while(&mut self) -> ParserResult<Statement<'a>> {
@@ -143,12 +155,20 @@ impl<'a> Parser<'a> {
 
         self.consume(TokenType::RightParen, "Expect ')' after if condition.")?;
 
-        let body = self.statement()?;
+        let body = self.block()?;
 
-        Ok(Statement::While {
-            condition,
-            body: Box::new(body),
-        })
+        Ok(Statement::While(statement::While {
+            condition: Box::new(condition),
+            body: match body {
+                // todo:
+                // each parsing function should return it's own struct
+                // so I don't need to do it,
+                // if I ensure that block() returns only the statement::Block,
+                // everything will be fine
+                Statement::Block(v) => v,
+                _ => unreachable!(),
+            },
+        }))
     }
 
     fn if_statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -168,11 +188,11 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        return Ok(Statement::If {
+        return Ok(Statement::If(statement::If {
             condition,
             then: Box::new(then_branch),
             otherwise: Box::new(otherwise_branch),
-        });
+        }));
     }
 
     fn block(&mut self) -> ParserResult<Statement<'a>> {
@@ -184,7 +204,7 @@ impl<'a> Parser<'a> {
 
         self.consume(TokenType::RightBrace, "Expect '}' after block.")?;
 
-        Ok(Statement::Block(statements))
+        Ok(Statement::Block(statement::Block { statements }))
     }
 
     fn print_statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -192,7 +212,7 @@ impl<'a> Parser<'a> {
 
         self.consume(TokenType::Semicolon, "Expected ';' after value.")?;
 
-        Ok(Statement::Print(value))
+        Ok(Statement::Print(statement::Print { value }))
     }
 
     fn expression_statement(&mut self) -> ParserResult<Statement<'a>> {
@@ -217,7 +237,12 @@ impl<'a> Parser<'a> {
 
             match expr {
                 Expression::Variable(token) => {
-                    return Ok(Expression::Assign(token, Box::new(value)));
+                    let expr = Expression::Assign(expression::Assign {
+                        name: token.value,
+                        value: Box::new(value),
+                    });
+
+                    return Ok(expr);
                 }
                 _ => Self::error(equals, String::from("Invalid assignment target"))?,
             }
@@ -233,11 +258,11 @@ impl<'a> Parser<'a> {
             let operator = self.advance().clone();
             let right = self.equality()?;
 
-            expr = Expression::Logical {
+            expr = Expression::Logical(expression::Logical {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            }
+            })
         }
 
         Ok(expr)
@@ -250,11 +275,11 @@ impl<'a> Parser<'a> {
             let operator = self.advance().clone();
             let right = self.equality()?;
 
-            expr = Expression::Logical {
+            expr = Expression::Logical(expression::Logical {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            }
+            })
         }
 
         Ok(expr)
@@ -270,11 +295,11 @@ impl<'a> Parser<'a> {
 
             let right = self.comparison()?;
 
-            expr = Expression::Binary {
+            expr = Expression::Binary(expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
 
         Ok(expr)
@@ -290,11 +315,11 @@ impl<'a> Parser<'a> {
 
             let right = self.term()?;
 
-            expr = Expression::Binary {
+            expr = Expression::Binary(expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
 
         Ok(expr)
@@ -310,11 +335,11 @@ impl<'a> Parser<'a> {
 
             let right = self.factor()?;
 
-            expr = Expression::Binary {
+            expr = Expression::Binary(expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
 
         Ok(expr)
@@ -330,11 +355,11 @@ impl<'a> Parser<'a> {
 
             let right = self.unary()?;
 
-            expr = Expression::Binary {
+            expr = Expression::Binary(expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
 
         Ok(expr)
@@ -350,9 +375,11 @@ impl<'a> Parser<'a> {
         let operator = self.previous().clone();
         let right = self.unary();
 
-        right.map(|right| Expression::Unary {
-            operator,
-            right: Box::new(right),
+        right.map(|right| {
+            Expression::Unary(expression::Unary {
+                operator,
+                right: Box::new(right),
+            })
         })
     }
 
@@ -388,13 +415,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let paren = self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
+        let _ = self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
 
-        return Ok(Expression::Call {
+        return Ok(Expression::Call(expression::Call {
             callee: Box::new(callee),
-            paren: paren.clone(),
+            // todo: add it | paren: paren.clone(),
             arguments: args,
-        });
+        }));
     }
 
     fn primary(&mut self) -> ParserResult<Expression<'a>> {
@@ -459,7 +486,9 @@ impl<'a> Parser<'a> {
             }
             TokenType::Identifier => {
                 let token = self.advance();
-                Ok(Expression::Variable(token.clone()))
+                Ok(Expression::Variable(expression::Variable {
+                    value: token.clone(),
+                }))
             }
             TokenType::LeftParen => {
                 self.advance();
@@ -468,7 +497,9 @@ impl<'a> Parser<'a> {
 
                 self.consume(TokenType::RightParen, "Expect ')' after expression")?;
 
-                Ok(Expression::Grouping(Box::new(expr)))
+                Ok(Expression::Grouping(expression::Grouping {
+                    value: Box::new(expr),
+                }))
             }
             _ => {
                 let token = self.peek().clone();
@@ -575,27 +606,35 @@ impl<'a> Parser<'a> {
         let mut body = self.statement()?;
 
         body = match increment {
-            Some(inc) => Statement::Block(vec![body, Statement::Expression(inc)]),
+            Some(inc) => Statement::Block(statement::Block {
+                statements: vec![body, Statement::Expression(inc)],
+            }),
             None => body,
         };
 
         match condition {
             None => {
-                body = Statement::While {
-                    condition: Expression::Literal(Literal::Boolean(true)),
-                    body: Box::new(body),
-                }
+                body = Statement::While(statement::While {
+                    condition: Box::new(Expression::Literal(Literal::Boolean(true))),
+                    body: statement::Block {
+                        statements: vec![body],
+                    },
+                })
             }
             Some(cond) => {
-                body = Statement::While {
-                    condition: cond,
-                    body: Box::new(body),
-                }
+                body = Statement::While(statement::While {
+                    condition: Box::new(cond),
+                    body: statement::Block {
+                        statements: vec![body],
+                    },
+                })
             }
         };
 
         body = match initializer {
-            Some(init) => Statement::Block(vec![init, body]),
+            Some(init) => Statement::Block(statement::Block {
+                statements: vec![init, body],
+            }),
             None => body,
         };
 
@@ -653,9 +692,9 @@ impl<'a> Parser<'a> {
 
         match body {
             Statement::Block(sttms) => {
-                let r#fn = Statement::Function(FunctionStatement {
+                let r#fn = Statement::Function(statement::Function {
                     name,
-                    params,
+                    parameters: params,
                     body: sttms,
                 });
 

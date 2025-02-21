@@ -40,15 +40,19 @@ pub fn run(statements: Vec<Statement>) -> Result<(), InterpreterError> {
 
 fn execute<'a>(statement: Statement<'a>, env: Environment<'a>) -> StatementResult<'a> {
     match statement {
-        // todo: Statement::Expression(expr) => execute_expression(expr, env),
+        Statement::Expression(expr) => execute_expression(expr, env),
         Statement::Print(expr) => execute_print(expr, env),
-        Statement::Var(var) => execute_var(name, expression, env),
-        Statement::Block(statements) => execute_block(statements, env),
+        Statement::Var(var) => execute_var(var, env),
+        Statement::Block(block) => execute_block(block, env),
         Statement::If(r#if) => execute_if(r#if, env),
         Statement::While(r#while) => execute_while(r#while, env),
         // Statement::Break => todo!(),
         Statement::Function(function) => execute_function(function, env),
-        Statement::Return(r#return) => StatementResult::Returned((Ok(env), value)),
+        Statement::Return(r#return) => {
+            let effect = StatementEffect::Return((env, r#return.value));
+
+            Ok(effect)
+        }
     }
 }
 
@@ -56,15 +60,17 @@ fn execute_function<'a>(
     function: statement::Function<'a>,
     mut env: Environment<'a>,
 ) -> StatementResult<'a> {
+    let name = function.name.lexeme.clone();
+
     let callable_function = crate::types::callable::Function {
         declaration: function,
     };
 
-    let function = Value::Callable(Rc::new(callable_function));
+    let callable_function = Value::Callable(Rc::new(callable_function));
 
-    env.define(r#function.name.lexeme, r#fn);
+    env.define(name, callable_function);
 
-    StatementResult::Normal(Ok(env))
+    Ok(StatementEffect::Standard(env))
 }
 
 pub fn evaluate<'a>(expression: Expression<'a>, env: Environment<'a>) -> EvaluationResult<'a> {
@@ -84,12 +90,15 @@ fn evaluate_function<'a>(call: expression::Call<'a>, env: Environment<'a>) -> Ev
     let (callee, mut env) = evaluate(*call.callee, env)?;
 
     match callee {
-        Value::Literal(_) => todo!("error for cannot calling non-callable values"),
+        Value::Literal(_) => panic!("You can only call functions"),
         Value::Callable(callable) => {
             let mut args: Vec<Value> = Vec::with_capacity(call.arguments.len());
 
             for arg in call.arguments {
-                let (arg, env) = evaluate(arg, env)?;
+                let (arg, _env) = evaluate(arg, env)?;
+
+                // todo: it don't seems right :|
+                env = _env;
 
                 args.push(arg);
             }
@@ -105,7 +114,7 @@ fn evaluate_function<'a>(call: expression::Call<'a>, env: Environment<'a>) -> Ev
                 // return error(call.paren, "Expected n arguments but got m");
             }
 
-            let (env, r#return) = callable.call(env, args);
+            let (env, r#return) = callable.call(env, args)?;
 
             Ok((r#return, env))
         }
@@ -302,11 +311,11 @@ fn evaluate_logical<'a>(
 }
 
 fn execute_expression<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    todo!();
+    evaluate(expression, env).map(|(_, env)| StatementEffect::Standard(env))
 }
 
-fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> StatementResult<'a> {
-    evaluate(expression, env).map(|(value, env)| {
+fn execute_print<'a>(print: statement::Print<'a>, env: Environment<'a>) -> StatementResult<'a> {
+    evaluate(print.value, env).map(|(value, env)| {
         match value {
             Value::Literal(v) => println!("{}", v),
             Value::Callable(c) => println!("{}", c),
@@ -316,7 +325,7 @@ fn execute_print<'a>(expression: Expression<'a>, env: Environment<'a>) -> Statem
     })
 }
 
-fn execute_var<'a>(var: statement::Var, mut env: Environment<'a>) -> StatementResult<'a> {
+fn execute_var<'a>(var: statement::Var<'a>, mut env: Environment<'a>) -> StatementResult<'a> {
     match var.value {
         None => {
             env.define(var.name.lexeme, Value::Literal(Literal::Nil));
@@ -333,10 +342,7 @@ fn execute_var<'a>(var: statement::Var, mut env: Environment<'a>) -> StatementRe
     }
 }
 
-pub fn execute_block<'a>(
-    statements: Vec<Statement<'a>>,
-    env: Environment<'a>,
-) -> StatementResult<'a> {
+pub fn execute_block<'a>(block: statement::Block<'a>, env: Environment<'a>) -> StatementResult<'a> {
     // TODO:
     // Fix Nested Scopes
     // Here we 'borrow' the environment and create a new one with the block as the parent
@@ -344,7 +350,7 @@ pub fn execute_block<'a>(
     // we return the parent environment and the block is dropped
     let mut block_env = Environment::block(env);
 
-    for statement in statements {
+    for statement in block.statements {
         let result = execute(statement, block_env)?;
 
         block_env = match result {

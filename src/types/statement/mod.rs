@@ -14,6 +14,8 @@ pub use r#return::Return;
 pub use r#while::While;
 pub use var::Var;
 
+use super::Expression;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement<'a> {
     If(If<'a>),
@@ -23,4 +25,5 @@ pub enum Statement<'a> {
     Block(Block<'a>),
     Print(Print<'a>),
     Var(Var<'a>),
+    Expression(Expression<'a>),
 }

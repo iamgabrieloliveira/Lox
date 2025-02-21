@@ -1,6 +1,7 @@
-use crate::ast::Callable;
 use crate::environment::{Environment, Value};
+use crate::types::callable::CallableReturn;
 use crate::types::expression::Literal;
+use crate::types::Callable;
 use std::fmt;
 use std::time::SystemTime;
 
@@ -12,7 +13,7 @@ impl<'a> Callable<'a> for Clock {
         return 0;
     }
 
-    fn call(&self, env: Environment<'a>, _args: Vec<Value>) -> crate::ast::CallableReturn<'a> {
+    fn call(&self, env: Environment<'a>, _args: Vec<Value>) -> CallableReturn<'a> {
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -20,7 +21,7 @@ impl<'a> Callable<'a> for Clock {
 
         let val = Value::Literal(Literal::Integer(time as i64));
 
-        return (env, val);
+        return Ok((env, val));
     }
 }
 

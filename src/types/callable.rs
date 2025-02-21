@@ -1,6 +1,12 @@
-use std::fmt::{Debug, Display};
+use std::fmt::{self, Debug, Display};
 
-use crate::environment::Environment;
+use crate::{
+    environment::Environment,
+    interpreter::{evaluate, execute_block, InterpreterError},
+};
+
+pub type CallableReturn<'a> =
+    Result<(Environment<'a>, crate::environment::Value<'a>), InterpreterError<'a>>;
 
 // Callable is the trait that native functions implement
 // and is used to call functions user-defined or native.
@@ -10,7 +16,7 @@ pub trait Callable<'a>: Debug + Display {
         &self,
         env: Environment<'a>,
         args: Vec<crate::environment::Value<'a>>,
-    ) -> (Environment<'a>, crate::environment::Value<'a>);
+    ) -> CallableReturn<'a>;
 }
 
 #[derive(Debug)]
@@ -18,9 +24,15 @@ pub struct Function<'a> {
     pub declaration: crate::types::statement::Function<'a>,
 }
 
+impl<'a> std::fmt::Display for Function<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<{} fn>", self.declaration.name.lexeme)
+    }
+}
+
 impl<'a> Callable<'a> for Function<'a> {
     fn arity(&self) -> usize {
-        self.declaration.params.len()
+        self.declaration.parameters.len()
     }
 
     fn call(
@@ -29,7 +41,7 @@ impl<'a> Callable<'a> for Function<'a> {
         args: Vec<crate::environment::Value<'a>>,
     ) -> CallableReturn<'a> {
         for (i, arg) in args.iter().enumerate() {
-            match self.declaration.params.get(i) {
+            match self.declaration.parameters.get(i) {
                 Some(param) => {
                     env.define(param.lexeme, arg.clone());
                 }
@@ -37,23 +49,22 @@ impl<'a> Callable<'a> for Function<'a> {
             };
         }
 
-        match execute_block(self.declaration.body.clone(), env) {
-            crate::interpreter::StatementResult::Normal(env) => (
-                env.unwrap(/* todo: impl result in call fn */),
-                crate::environment::Value::Literal(Literal::Nil),
-            ),
-            crate::interpreter::StatementResult::Returned((env, value)) => {
-                let env = env.unwrap(/* todo: impl result in call fn */);
+        match execute_block(self.declaration.body.clone(), env)? {
+            crate::interpreter::StatementEffect::Standard(env) => {
+                let val =
+                    crate::environment::Value::Literal(crate::types::expression::Literal::Nil);
 
-                match value {
-                    Some(v) => {
-                        let (v, env) = evaluate(v, env).unwrap(/* todo */);
-
-                        (env, v)
-                    }
-                    None => (env, crate::environment::Value::Literal(Literal::Nil)),
-                }
+                Ok((env, val))
             }
+            crate::interpreter::StatementEffect::Return((env, value)) => match value {
+                Some(v) => evaluate(v, env).map(|(v, e)| (e, v)),
+                None => {
+                    let val =
+                        crate::environment::Value::Literal(crate::types::expression::Literal::Nil);
+
+                    Ok((env, val))
+                }
+            },
         }
     }
 }
